@@ -1,0 +1,21 @@
+{
+  "name": "@iicpc/api",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^8.3.0",
+    "@iicpc/protocol": "*",
+    "bullmq": "^5.12.0",
+    "fastify": "^4.27.0",
+    "ioredis": "^5.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.0"
+  }
+}
