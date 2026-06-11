@@ -20,6 +20,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      API_PORT: 3000
     depends_on:
       redis:
         condition: service_healthy
@@ -33,7 +34,6 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # Linux: use 172.17.0.1 or add extra_hosts below
       ENGINE_HOST: host.docker.internal
     depends_on:
       redis:
@@ -41,18 +41,36 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - submissions:/submissions
-    # Uncomment on Linux (no host.docker.internal by default):
+    # On Linux, uncomment:
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
+
+  observability:
+    build:
+      context: .
+      dockerfile: services/observability/Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OBS_PORT: 3002
+    depends_on:
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
       context: services/frontend
       dockerfile: Dockerfile
     ports:
-      - "5173:80"
+      - "3001:3001"
+    environment:
+      API_URL: http://api:3000
+      OBS_URL: http://observability:3002
     depends_on:
       - api
+      - observability
 
 volumes:
   submissions:

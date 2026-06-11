@@ -1,14 +1,18 @@
-import Fastify from 'fastify';
-import multipart from '@fastify/multipart';
-import { submitRoute } from './routes/submit';
-import { leaderboardRoute } from './routes/leaderboard';
+import express from 'express';
+import cors from 'cors';
+import { submitRouter } from './routes/submit';
+import { leaderboardRouter } from './routes/leaderboard';
 
-const app = Fastify({ logger: true });
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
-app.register(submitRoute);
-app.register(leaderboardRoute);
+app.use(submitRouter);
+app.use(leaderboardRouter);
 
-app.listen({ port: Number(process.env.API_PORT ?? 3000), host: '0.0.0.0' }, (err) => {
-  if (err) { app.log.error(err); process.exit(1); }
+app.get('/health', (_req, res) => res.json({ ok: true }));
+
+const port = Number(process.env.API_PORT ?? 3000);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`API listening on port ${port}`);
 });

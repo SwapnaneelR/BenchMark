@@ -6,14 +6,16 @@
     "packages/*",
     "services/api",
     "services/worker",
+    "services/observability",
     "services/frontend"
   ],
   "scripts": {
     "dev:api": "npm run dev -w @iicpc/api",
     "dev:worker": "npm run dev -w @iicpc/worker",
-    "dev:frontend": "npm run dev -w @iicpc/frontend",
+    "dev:obs": "npm run dev -w @iicpc/observability",
+    "dev:frontend": "npm run dev -w @iicpc/frontend -- --port 8080",
     "build": "npm run build -ws --if-present",
-    "docker:up": "docker-compose up --build",
-    "docker:down": "docker-compose down"
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
   }
 }

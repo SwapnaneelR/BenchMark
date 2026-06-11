@@ -5,7 +5,14 @@ export interface Metrics {
   tps: number;
 }
 
-// TODO: compute percentile latencies and TPS from raw latency array
-export function computeMetrics(_latencies: number[], _durationMs?: number): Metrics {
-  throw new Error('Not implemented');
+export function computeMetrics(latencies: number[], durationMs = 30000): Metrics {
+  if (latencies.length === 0) return { p50: 0, p90: 0, p99: 0, tps: 0 };
+  const sorted = [...latencies].sort((a, b) => a - b);
+  const pct = (p: number) => sorted[Math.min(Math.floor((p / 100) * sorted.length), sorted.length - 1)];
+  return {
+    p50: pct(50),
+    p90: pct(90),
+    p99: pct(99),
+    tps: Math.round((latencies.length / durationMs) * 1000),
+  };
 }

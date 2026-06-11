@@ -1,23 +1,30 @@
-import { FastifyPluginAsync } from 'fastify';
-import { pipeline } from 'stream/promises';
-import { createWriteStream } from 'fs';
-import { mkdir } from 'fs/promises';
+import { Router } from 'express';
+import multer from 'multer';
 import path from 'path';
+import { mkdir, rename } from 'fs/promises';
 import { benchmarkQueue } from '../queue';
 
-export const submitRoute: FastifyPluginAsync = async (app) => {
-  app.post('/submit', async (req, reply) => {
-    const data = await req.file();
-    if (!data) return reply.status(400).send({ error: 'No file uploaded' });
+const upload = multer({ dest: '/tmp/uploads/', limits: { fileSize: 50 * 1024 * 1024 } });
 
-    const teamId = ((req.query as Record<string, string>).team ?? 'anonymous').replace(/[^a-z0-9_-]/gi, '_');
-    const submitDir = path.join('/submissions', teamId, Date.now().toString());
-    await mkdir(submitDir, { recursive: true });
+export const submitRouter = Router();
 
-    const zipPath = path.join(submitDir, 'submission.zip');
-    await pipeline(data.file, createWriteStream(zipPath));
+submitRouter.post('/submit', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'No file uploaded. Send zip as multipart field "file".' });
+    return;
+  }
 
-    const job = await benchmarkQueue.add('run', { teamId, zipPath });
-    reply.send({ jobId: job.id, team: teamId });
-  });
-};
+  const team = (typeof req.query.team === 'string' ? req.query.team : 'anonymous')
+    .replace(/[^a-z0-9_-]/gi, '_')
+    .slice(0, 64);
+
+  const submitDir = path.join('/submissions', team, Date.now().toString());
+  await mkdir(submitDir, { recursive: true });
+
+  const zipPath = path.join(submitDir, 'submission.zip');
+
+  await rename(req.file.path, zipPath);
+
+  const job = await benchmarkQueue.add('run', { teamId: team, zipPath });
+  res.json({ jobId: job.id, team, zipPath });
+});

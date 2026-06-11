@@ -7,14 +7,20 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@fastify/multipart": "^8.3.0",
     "@iicpc/protocol": "*",
     "bullmq": "^5.12.0",
-    "fastify": "^4.27.0",
-    "ioredis": "^5.3.2"
+    "cors": "^2.8.5",
+    "express": "^4.19.0",
+    "ioredis": "^5.3.2",
+    "multer": "^1.4.5-lts.1",
+    "unzipper": "^0.12.3"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11",
     "@types/node": "^20.0.0",
+    "@types/unzipper": "^0.10.9",
     "tsx": "^4.15.0",
     "typescript": "^5.4.0"
   }
