@@ -63,11 +63,11 @@ services:
     build:
       context: services/frontend
       dockerfile: Dockerfile
+      args:
+        API_URL: http://api:3000
+        OBS_URL: http://observability:3002
     ports:
       - "3001:3001"
-    environment:
-      API_URL: http://api:3000
-      OBS_URL: http://observability:3002
     depends_on:
       - api
       - observability

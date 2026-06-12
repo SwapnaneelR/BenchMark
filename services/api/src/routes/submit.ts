@@ -4,7 +4,7 @@ import path from 'path';
 import { mkdir, rename } from 'fs/promises';
 import { benchmarkQueue } from '../queue';
 
-const upload = multer({ dest: '/tmp/uploads/', limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ dest: '/submissions/tmp/', limits: { fileSize: 50 * 1024 * 1024 } });
 
 export const submitRouter = Router();
 

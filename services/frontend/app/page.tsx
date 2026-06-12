@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -14,6 +14,24 @@ interface Entry {
     metrics?: { p50: number; p90: number; p99: number; tps: number };
     timestamp?: number;
   };
+}
+
+interface LiveMetrics {
+  tps: number | null;
+  p99LatencyMs: number | null;
+  acksLast10s: number;
+  totalEventsStored: number;
+  activeRuns: string[];
+}
+
+interface LogEntry {
+  _id?: string;
+  ts?: number;
+  level?: string;
+  event?: string;
+  runId?: string;
+  botId?: string;
+  [key: string]: unknown;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -42,7 +60,6 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      {/* header */}
       <div className="grid gap-x-3 text-xs tracking-widest mb-1 pb-1"
         style={{ gridTemplateColumns: '56px 1fr 70px 130px 72px 72px 84px',
           color: 'var(--term-muted)', borderBottom: '1px solid var(--term-border)' }}>
@@ -159,7 +176,7 @@ function SubmitPanel() {
           <div className="text-[11px] mb-1" style={{ color: 'var(--term-muted)' }}>{'> TEAM_NAME'}</div>
           <div className="flex items-center gap-2">
             <span className="text-[11px]" style={{ color: 'var(--term-muted)', whiteSpace: 'nowrap' }}>
-              iicpc@bench:~$
+              bench:~$
             </span>
             <input type="text" value={team} onChange={e => setTeam(e.target.value)}
               placeholder="yourteam_" required className={inputCls} />
@@ -173,7 +190,7 @@ function SubmitPanel() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[11px]" style={{ color: 'var(--term-muted)', whiteSpace: 'nowrap' }}>
-              iicpc@bench:~$
+              bench:~$
             </span>
             <input type="file" accept=".zip" required
               onChange={e => setFile(e.target.files?.[0] ?? null)}
@@ -182,7 +199,7 @@ function SubmitPanel() {
                 file:text-xs file:font-mono file:cursor-pointer file:mr-3" />
           </div>
           {file && (
-            <div className="text-[11px] mt-1 ml-28" style={{ color: 'var(--term-muted)' }}>
+            <div className="text-[11px] mt-1 ml-20" style={{ color: 'var(--term-muted)' }}>
               loaded: {file.name} &nbsp;({(file.size / 1024).toFixed(1)} KB)
             </div>
           )}
@@ -222,15 +239,137 @@ function SubmitPanel() {
 }
 
 function LogsPanel() {
+  const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [filter, setFilter] = useState({ runId: '', level: '' });
+  const [metricsErr, setMetricsErr] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+
+    const fetchAll = async () => {
+      try {
+        const params = new URLSearchParams({ limit: '300' });
+        if (filter.runId) params.set('runId', filter.runId);
+        if (filter.level) params.set('level', filter.level);
+
+        const [mRes, lRes] = await Promise.all([
+          fetch('/obs/metrics/live'),
+          fetch(`/obs/logs?${params}`),
+        ]);
+        if (!alive) return;
+
+        if (mRes.ok) { setMetrics(await mRes.json()); setMetricsErr(false); }
+        else setMetricsErr(true);
+
+        if (lRes.ok) {
+          const data: LogEntry[] = await lRes.json();
+          setLogs(data.reverse());
+        }
+      } catch {
+        if (alive) setMetricsErr(true);
+      }
+    };
+
+    fetchAll();
+    const id = setInterval(fetchAll, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, [filter.runId, filter.level]);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [logs, autoScroll]);
+
+  const levelColor = (level?: string) => {
+    if (level === 'error') return 'var(--term-error)';
+    if (level === 'warn') return 'var(--term-amber)';
+    return 'var(--term-green)';
+  };
+
   return (
-    <div style={{ border: '1px solid var(--term-muted)', height: '70vh' }}>
-      <div className="text-[11px] px-2 py-1"
-        style={{ background: 'var(--term-muted)', color: 'var(--term-bg)' }}>
-        +-- LIVE OBSERVABILITY STREAM --
+    <div className="flex flex-col gap-3">
+      {/* metrics bar */}
+      <div className="flex gap-6 text-[11px] px-3 py-2"
+        style={{ border: '1px solid var(--term-border)', background: 'rgba(51,255,0,0.03)' }}>
+        {metricsErr ? (
+          <span style={{ color: 'var(--term-error)' }}>[ERR] observability unreachable</span>
+        ) : metrics ? (
+          <>
+            <span>TPS: <span className="glow" style={{ color: 'var(--term-green)' }}>{metrics.tps ?? '—'}</span></span>
+            <span>p99: <span style={{ color: 'var(--term-green)' }}>{metrics.p99LatencyMs != null ? metrics.p99LatencyMs + 'ms' : '—'}</span></span>
+            <span>acks/10s: <span style={{ color: 'var(--term-green)' }}>{metrics.acksLast10s}</span></span>
+            <span>stored: <span style={{ color: 'var(--term-green)' }}>{metrics.totalEventsStored}</span></span>
+            {metrics.activeRuns?.length > 0 && (
+              <span>run: <span className="glow" style={{ color: 'var(--term-green)' }}>{metrics.activeRuns[0]}</span></span>
+            )}
+          </>
+        ) : (
+          <span style={{ color: 'var(--term-muted)' }}>loading metrics<span className="cursor">█</span></span>
+        )}
       </div>
-      <iframe src="/obs/"
-        style={{ width: '100%', height: 'calc(100% - 22px)', border: 'none', display: 'block' }}
-        title="Observability" />
+
+      {/* filters */}
+      <div className="flex gap-3 text-[11px]">
+        <div className="flex items-center gap-2">
+          <span style={{ color: 'var(--term-muted)' }}>run:</span>
+          <input
+            value={filter.runId}
+            onChange={e => setFilter(f => ({ ...f, runId: e.target.value }))}
+            placeholder="filter by run-id"
+            className="bg-term-bg border border-term-border px-2 py-0.5 text-term-green
+              font-mono outline-none focus:border-term-green placeholder-term-muted w-52"
+            style={{ fontSize: '11px' }}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span style={{ color: 'var(--term-muted)' }}>level:</span>
+          <select
+            value={filter.level}
+            onChange={e => setFilter(f => ({ ...f, level: e.target.value }))}
+            className="bg-term-bg border border-term-border px-2 py-0.5 text-term-green font-mono outline-none"
+            style={{ fontSize: '11px' }}>
+            <option value="">all</option>
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="error">error</option>
+          </select>
+        </div>
+        <label className="flex items-center gap-1.5 ml-auto cursor-pointer" style={{ color: 'var(--term-muted)' }}>
+          <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)}
+            className="accent-term-green" />
+          auto-scroll
+        </label>
+      </div>
+
+      {/* log entries */}
+      <div ref={scrollRef} style={{ height: '52vh', overflowY: 'auto', border: '1px solid var(--term-border)' }}>
+        {logs.length === 0 ? (
+          <pre className="text-[11px] text-center py-8" style={{ color: 'var(--term-muted)' }}>
+            [EMPTY] no events yet — submit an engine to see live logs
+          </pre>
+        ) : (
+          logs.map((entry, i) => {
+            const ts = entry.ts ? new Date(entry.ts).toISOString().slice(11, 23) : '';
+            const line = JSON.stringify(entry);
+            return (
+              <div key={entry._id ?? i}
+                className="text-[11px] px-3 py-0.5 font-mono"
+                style={{
+                  borderBottom: '1px solid var(--term-dim)',
+                  color: levelColor(entry.level),
+                  wordBreak: 'break-all',
+                }}>
+                <span style={{ color: 'var(--term-muted)', marginRight: '8px' }}>{ts}</span>
+                {line}
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
@@ -269,7 +408,7 @@ export default function HomePage() {
         <span>
           {lastRefresh
             ? <>last=<span style={{ color: 'var(--term-green)' }}>{lastRefresh.toLocaleTimeString()}</span></>
-            : <span className="cursor">█</span>}
+            : <span style={{ color: 'var(--term-muted)' }}>connecting...</span>}
         </span>
       </div>
 

@@ -82,7 +82,7 @@ app.get('/', (_req, res) => {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>IICPC Observability</title>
+<title>BenchMark Observability</title>
 <style>
   body { font-family: monospace; background: #0f0f0f; color: #e2e2e2; margin: 0; padding: 16px; }
   h1 { color: #60a5fa; margin: 0 0 12px; }
@@ -100,7 +100,7 @@ app.get('/', (_req, res) => {
 </style>
 </head>
 <body>
-<h1>IICPC Observability</h1>
+<h1>BenchMark Observability</h1>
 <div id="metrics">Loading metrics…</div>
 <div id="controls">
   <input id="runId" placeholder="Run ID" />
