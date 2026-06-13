@@ -18,6 +18,9 @@ submitRouter.post('/submit', upload.single('file'), async (req, res) => {
     .replace(/[^a-z0-9_-]/gi, '_')
     .slice(0, 64);
 
+  const rawBots = typeof req.body?.botCount === 'string' ? req.body.botCount : '';
+  const botCount = Math.min(500, Math.max(1, parseInt(rawBots) || 50));
+
   const submitDir = path.join('/submissions', team, Date.now().toString());
   await mkdir(submitDir, { recursive: true });
 
@@ -25,6 +28,6 @@ submitRouter.post('/submit', upload.single('file'), async (req, res) => {
 
   await rename(req.file.path, zipPath);
 
-  const job = await benchmarkQueue.add('run', { teamId: team, zipPath });
-  res.json({ jobId: job.id, team, zipPath });
+  const job = await benchmarkQueue.add('run', { teamId: team, zipPath, botCount });
+  res.json({ jobId: job.id, team, zipPath, botCount });
 });

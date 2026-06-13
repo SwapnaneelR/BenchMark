@@ -128,6 +128,7 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
 function SubmitPanel() {
   const [team, setTeam] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [botCount, setBotCount] = useState(50);
   const [status, setStatus] = useState<'idle' | 'submitting' | 'ok' | 'err'>('idle');
   const [message, setMessage] = useState('');
 
@@ -139,6 +140,7 @@ function SubmitPanel() {
     try {
       const fd = new FormData();
       fd.append('file', file);
+      fd.append('botCount', String(botCount));
       const res = await fetch(`/api/submit?team=${encodeURIComponent(team.trim())}`, {
         method: 'POST',
         body: fd,
@@ -205,6 +207,27 @@ function SubmitPanel() {
           )}
         </div>
 
+        <div>
+          <div className="text-[11px] mb-1" style={{ color: 'var(--term-muted)' }}>
+            {'> BOT_COUNT'}&nbsp;
+            <span style={{ color: 'var(--term-muted)' }}>— bots hitting engine simultaneously (max 500)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px]" style={{ color: 'var(--term-muted)', whiteSpace: 'nowrap' }}>
+              bench:~$
+            </span>
+            <input
+              type="range" min={10} max={500} step={10}
+              value={botCount}
+              onChange={e => setBotCount(Number(e.target.value))}
+              className="flex-1 accent-term-green"
+            />
+            <span className="text-sm font-mono glow" style={{ color: 'var(--term-green)', minWidth: '60px' }}>
+              {botCount} bots
+            </span>
+          </div>
+        </div>
+
         <button type="submit"
           disabled={status === 'submitting' || !team.trim() || !file}
           className="border border-term-green text-term-green bg-term-bg px-5 py-1.5 text-sm
@@ -231,7 +254,7 @@ function SubmitPanel() {
       <div className="mt-5 pt-4" style={{ borderTop: '1px dashed var(--term-muted)' }}>
         <div className="text-[10px] mb-1" style={{ color: 'var(--term-muted)' }}>-- curl equivalent --</div>
         <pre className="text-[11px] whitespace-pre-wrap break-all" style={{ color: 'var(--term-muted)' }}>
-          {`curl -X POST -F "file=@engine.zip" \\\n  "http://localhost:3000/submit?team=${team || 'yourteam'}"`}
+          {`curl -X POST -F "file=@engine.zip" -F "botCount=${botCount}" \\\n  "http://localhost:3000/submit?team=${team || 'yourteam'}"`}
         </pre>
       </div>
     </div>

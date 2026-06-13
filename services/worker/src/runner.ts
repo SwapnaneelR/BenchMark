@@ -10,7 +10,7 @@ import { redis } from './redis';
 
 const ENGINE_HOST = process.env.ENGINE_HOST ?? 'host.docker.internal';
 
-export async function run(data: { teamId: string; zipPath: string }) {
+export async function run(data: { teamId: string; zipPath: string; botCount?: number }) {
   const runId = `${data.teamId}-${Date.now()}`;
   console.log(`[runner] Starting run ${runId}`);
 
@@ -54,7 +54,7 @@ export async function run(data: { teamId: string; zipPath: string }) {
 
     // Phase 2: load test
     const fleet = new BotFleet(wsUrl, runId, redis);
-    const { latencies: loadLatencies, tps } = await fleet.run(50, 100);
+    const { latencies: loadLatencies, tps } = await fleet.run(data.botCount ?? 50, 100);
     console.log(`[runner] Load test done: ${loadLatencies.length} acks, ${tps} TPS`);
 
     const allLatencies = [...serialLatencies, ...loadLatencies];
