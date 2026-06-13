@@ -1,3 +1,10 @@
+# Build C++ fleet binary on the same Alpine base as the runner so shared libs match.
+FROM node:20-alpine AS fleet-builder
+RUN apk add --no-cache cmake make g++ boost-dev
+WORKDIR /fleet
+COPY services/fleet/ .
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
+
 FROM node:20-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
@@ -19,8 +26,9 @@ RUN npm run build -w @iicpc/protocol
 RUN npm run build -w @iicpc/worker
 
 FROM node:20-alpine
-RUN apk add --no-cache docker-cli
+RUN apk add --no-cache docker-cli boost-libs
 WORKDIR /app
+COPY --from=fleet-builder /fleet/build/fleet /usr/local/bin/fleet
 COPY --from=builder /app/node_modules                    ./node_modules
 COPY --from=builder /app/packages/protocol/dist          ./packages/protocol/dist
 COPY --from=builder /app/packages/protocol/package.json  ./packages/protocol/package.json

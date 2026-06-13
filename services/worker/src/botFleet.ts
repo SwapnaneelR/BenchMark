@@ -1,33 +1,45 @@
-import type { Redis } from 'ioredis';
-import { Bot } from './bot';
-import { generateOrders } from './orderGen';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { readFile, unlink } from 'fs/promises';
+import { tmpdir } from 'os';
+import path from 'path';
+
+const execFileAsync = promisify(execFile);
 
 export class BotFleet {
   constructor(
     private url: string,
     private runId: string,
-    private redis?: Redis,
+    private redis?: unknown,
   ) {}
 
   async run(botCount = 50, ordersPerBot = 100): Promise<{ latencies: number[]; tps: number }> {
-    const latencies: number[] = [];
-    const startMs = Date.now();
+    const resultsFile = path.join(tmpdir(), `fleet-${this.runId}.json`);
 
-    const workers = Array.from({ length: botCount }, (_, i) => {
-      const bot = new Bot(this.url, `bot-${i}`, this.runId, this.redis);
-      const orders = generateOrders(ordersPerBot, 1000 + i);
-      // Stagger starts by 20ms per bot to avoid thundering herd
-      return new Promise<void>(resolve =>
-        setTimeout(async () => {
-          await bot.runLoad(orders, (ms) => latencies.push(ms));
-          resolve();
-        }, i * 20)
+    try {
+      const { stderr } = await execFileAsync(
+        'fleet',
+        [
+          '--url',     this.url,
+          '--bots',    String(botCount),
+          '--orders',  String(ordersPerBot),
+          '--seed',    '1000',
+          '--stagger', '20',
+          '--out',     resultsFile,
+        ],
+        { timeout: 180_000 },
       );
-    });
+      if (stderr) console.log('[fleet]', stderr.trim());
+    } catch (err: any) {
+      console.error('[fleet] binary failed:', err.stderr ?? err.message);
+      throw err;
+    }
 
-    await Promise.all(workers);
-    const durationMs = Date.now() - startMs;
-    const tps = Math.round((latencies.length / durationMs) * 1000);
-    return { latencies, tps };
+    const raw = await readFile(resultsFile, 'utf8');
+    await unlink(resultsFile).catch(() => {});
+
+    const result = JSON.parse(raw) as { acks: number; tps: number; latencies_ms: number[] };
+    console.log(`[fleet] ${result.acks} acks, TPS=${result.tps}`);
+    return { latencies: result.latencies_ms, tps: result.tps };
   }
 }
