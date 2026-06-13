@@ -64,7 +64,7 @@ export async function buildImage(contextDir: string, tag: string): Promise<void>
   // Docker daemon can't access paths that only exist inside the worker container.
   const { stderr } = await execWithLogs(
     `tar -C "${dir}" --exclude='./node_modules' --exclude='./.git' -czf - . | docker build -t ${tag} -`,
-    { timeout: 120_000 },
+    { timeout: 600_000 },
   );
   if (stderr) console.log('[docker build]', stderr);
 }
