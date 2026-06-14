@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 # BuildKit cache mount: npm cache lives outside the overlay layer → no disk cost during build
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --prefer-offline
+    npm install
 COPY . .
 ARG API_URL=http://api:3000
 ARG OBS_URL=http://observability:3002
