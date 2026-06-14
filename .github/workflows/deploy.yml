@@ -16,14 +16,18 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
             cd BenchMark
-            git pull
-            # Forcefully clean the submissions volume using a temporary container (bypasses need for worker to be running)
+            git remote set-url origin https://github.com/SwapnaneelR/BenchMark.git
+            git fetch origin
+            git reset --hard origin/main
+            # Clean extracted dirs from submissions volume
             docker run --rm -v benchmark_submissions:/submissions alpine sh -c "rm -rf /submissions/*/*/extracted" || true
-            # Delete the swollen docker-in-docker volume entirely (it will be recreated automatically)
+            # Remove swollen DinD volume (recreated automatically on next run)
             docker volume rm benchmark_docker-data || true
-            # Clean up host docker system and builder cache
+            # Prune unused images and build cache to prevent ENOSPC
             docker system prune -af
             docker builder prune -af
-            docker compose up --build -d
+            # Force full rebuild with no layer cache, then start
+            docker compose build --no-cache
+            docker compose up -d
             docker compose ps
 
