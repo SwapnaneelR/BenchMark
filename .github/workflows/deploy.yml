@@ -19,16 +19,16 @@ jobs:
             set -e
             REPO_DIR=$(find /root /home -maxdepth 3 -name "docker-compose.yml" 2>/dev/null | head -1 | xargs dirname)
             echo "Found repo at: $REPO_DIR"
+            cd "$REPO_DIR"
+            docker compose down --remove-orphans || true
             # Prune first to reclaim disk before pulling/building
             docker run --rm -v benchmark_submissions:/submissions alpine sh -c "rm -rf /submissions/*/*/extracted" || true
-            docker volume rm benchmark_docker-data || true
+            docker volume ls --filter label=com.docker.compose.volume=docker-data --format '{{.Name}}' | xargs -r docker volume rm || true
             docker system prune -af --volumes
             docker builder prune -af
-            cd "$REPO_DIR"
             git remote set-url origin https://github.com/SwapnaneelR/BenchMark.git
             git fetch origin
             git reset --hard origin/main
             # Build with cache (layer reuse keeps disk usage low during build)
             docker compose up --build -d
             docker compose ps
-
