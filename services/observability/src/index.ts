@@ -42,21 +42,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Optional HTTP Basic Auth — enable by setting OBS_USER + OBS_PASS env vars.
-// Without these the endpoint is open (backward-compat for local dev).
-const obsUser = process.env.OBS_USER;
-const obsPass = process.env.OBS_PASS;
-if (obsUser && obsPass) {
-  const expected = Buffer.from(`${obsUser}:${obsPass}`).toString('base64');
-  app.use((_req, res, next) => {
-    const auth = _req.headers.authorization ?? '';
-    if (auth === `Basic ${expected}`) return next();
-    res.set('WWW-Authenticate', 'Basic realm="BenchMark Observability"');
-    res.status(401).send('Unauthorized');
-  });
-  console.log(`[obs] Basic Auth enabled for user "${obsUser}"`);
-}
-
 app.get('/logs', (req, res) => {
   const { runId, botId, level, q, limit, teamId } = req.query as Record<string, string>;
   const max = Math.min(parseInt(limit ?? '500'), 2000);

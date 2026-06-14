@@ -1,0 +1,19 @@
+:80 {
+    # API — strip /api prefix before proxying
+    handle_path /api/* {
+        reverse_proxy api:3000
+    }
+
+    # Observability — admin only, basic auth gate, strip /admin prefix
+    handle_path /admin/* {
+        basic_auth {
+            {$OBS_USER} {$OBS_PASS_HASH}
+        }
+        reverse_proxy observability:3002
+    }
+
+    # Frontend — catch-all
+    handle {
+        reverse_proxy frontend:3001
+    }
+}

@@ -2,10 +2,14 @@ version: '3.8'
 
 # Two named networks keep the attack surface minimal:
 #   bench-infra (internal=true): redis, api, worker, observability — no internet routing
-#   bench-front:                 api, observability, frontend — browser-accessible services
+#   bench-front:                 proxy, api, observability, frontend — browser-accessible services
 #
 # Submission engine containers get their own ephemeral --internal network per run
 # (created/destroyed dynamically by worker/src/docker.ts).
+#
+# Admin access: http://localhost/admin  (user: admin, pass: benchmark2026)
+# Change password: docker run --rm caddy:2-alpine caddy hash-password --plaintext '<newpass>'
+# then update OBS_PASS_HASH below and run: docker compose up -d proxy
 
 networks:
   bench-infra:
@@ -15,6 +19,26 @@ networks:
     driver: bridge
 
 services:
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./services/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      OBS_USER: admin
+      OBS_PASS_HASH: $$2a$$14$$J9faJ6XqDXT0GeKtSm8J4OQY9j4Bdl/6jaYzeZFo8eW2V3JsML4Qq
+    networks:
+      - bench-front
+    depends_on:
+      - frontend
+      - api
+      - observability
+
   redis:
     image: redis:7-alpine
     networks:
@@ -29,8 +53,6 @@ services:
     build:
       context: .
       dockerfile: services/api/Dockerfile
-    ports:
-      - "3000:3000"
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -76,15 +98,10 @@ services:
     build:
       context: .
       dockerfile: services/observability/Dockerfile
-    ports:
-      - "3002:3002"
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       OBS_PORT: 3002
-      # Set these to enable HTTP Basic Auth on all observability routes.
-      # OBS_USER: admin
-      # OBS_PASS: changeme
     depends_on:
       redis:
         condition: service_healthy
@@ -99,8 +116,6 @@ services:
       args:
         API_URL: http://api:3000
         OBS_URL: http://observability:3002
-    ports:
-      - "3001:3001"
     depends_on:
       - api
       - observability
@@ -109,3 +124,5 @@ services:
 
 volumes:
   submissions:
+  caddy-data:
+  caddy-config:
