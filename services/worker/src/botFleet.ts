@@ -14,8 +14,10 @@ export class BotFleet {
     private redis?: unknown,
   ) {}
 
-  async run(botCount = 50, ordersPerBot = 100): Promise<{ latencies: number[]; tps: number; tradeStats: TradeStats }> {
+  async run(botCount = 50, ordersPerBot = 100): Promise<{ latencies: number[]; tps: number; stability: number; tradeStats: TradeStats }> {
     const resultsFile = path.join(tmpdir(), `fleet-${this.runId}.json`);
+    // Spread connections over ~10 seconds to avoid thundering herd on the engine's accept().
+    const staggerMs = Math.max(5, Math.floor(10_000 / botCount));
 
     try {
       const { stderr } = await execFileAsync(
@@ -25,10 +27,10 @@ export class BotFleet {
           '--bots',    String(botCount),
           '--orders',  String(ordersPerBot),
           '--seed',    '1000',
-          '--stagger', '20',
+          '--stagger', String(staggerMs),
           '--out',     resultsFile,
         ],
-        { timeout: 180_000 },
+        { timeout: 300_000 },
       );
       if (stderr) console.log('[fleet]', stderr.trim());
     } catch (err: any) {
@@ -51,18 +53,23 @@ export class BotFleet {
       realizedPnl?: number;
       netPosition?: number;
     };
+
+    const expected = botCount * ordersPerBot;
+    const stability = expected > 0 ? Math.min(1, result.acks / expected) : 0;
+
     const tradeStats: TradeStats = {
-      totalOrders: botCount * ordersPerBot,
-      ackedOrders: result.acks - (result.rejectCount ?? 0),
+      totalOrders:    expected,
+      ackedOrders:    result.acks - (result.rejectCount ?? 0),
       rejectedOrders: result.rejectCount ?? 0,
-      fillCount: result.fillCount ?? 0,
-      filledOrders: result.filledOrders ?? 0,
-      filledQty: result.filledQty ?? 0,
-      volumeUsd: result.volumeUsd ?? 0,
-      realizedPnl: result.realizedPnl ?? 0,
-      netPosition: result.netPosition ?? 0,
+      fillCount:      result.fillCount ?? 0,
+      filledOrders:   result.filledOrders ?? 0,
+      filledQty:      result.filledQty ?? 0,
+      volumeUsd:      result.volumeUsd ?? 0,
+      realizedPnl:    result.realizedPnl ?? 0,
+      netPosition:    result.netPosition ?? 0,
     };
-    console.log(`[fleet] ${result.acks} acks, TPS=${result.tps}, filledOrders=${tradeStats.filledOrders}, volumeUsd=${tradeStats.volumeUsd}`);
-    return { latencies: result.latencies_ms, tps: result.tps, tradeStats };
+
+    console.log(`[fleet] ${result.acks}/${expected} acks, TPS=${result.tps}, stability=${(stability * 100).toFixed(1)}%, filledOrders=${tradeStats.filledOrders}, volumeUsd=${tradeStats.volumeUsd}`);
+    return { latencies: result.latencies_ms, tps: result.tps, stability, tradeStats };
   }
 }

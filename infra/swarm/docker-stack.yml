@@ -1,0 +1,264 @@
+# BenchMark Platform — Docker Swarm Stack
+#
+# Demonstrates horizontal scaling of stateless services (api, observability, frontend).
+# Redis and proxy stay at 1 replica (stateful / single TLS entry point).
+# Worker and its docker-daemon sidecar must co-locate; constrain to worker-labelled nodes.
+#
+# Quick start:
+#   docker swarm init
+#   docker node update --label-add role=worker $(docker node ls -q)
+#   docker stack deploy -c infra/swarm/docker-stack.yml benchmark
+#   docker service ls
+#
+# Multi-node notes:
+#   - submissions volume: switch to NFS driver (see commented driver_opts below)
+#   - redis: add Redis Sentinel or Redis Cluster for HA
+#   - caddy-data: pin proxy to a manager node for cert persistence
+
+networks:
+  bench-infra:
+    driver: overlay
+    driver_opts:
+      encrypted: "true"       # encrypt overlay traffic between nodes
+    attachable: true
+    internal: true            # no internet routing on the data plane
+
+  bench-front:
+    driver: overlay
+    attachable: true          # internet-accessible; proxy publishes ports
+
+  bench-docker:
+    driver: overlay
+    driver_opts:
+      encrypted: "true"
+    attachable: true
+    internal: true            # only worker ↔ docker-daemon
+
+volumes:
+  submissions:
+    driver: local
+    # For multi-node (uncomment and configure NFS):
+    # driver: local
+    # driver_opts:
+    #   type: nfs
+    #   o: addr=<NFS_SERVER_IP>,rw,soft
+    #   device: ":/exports/benchmark-submissions"
+  redis-data:
+    driver: local
+  docker-data:
+    driver: local
+  caddy-data:
+    driver: local
+  caddy-config:
+    driver: local
+
+services:
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - target: 80
+        published: 80
+        mode: host            # bypass routing mesh for raw TCP performance
+      - target: 443
+        published: 443
+        mode: host
+    volumes:
+      - ./services/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      CADDY_HOST: ${CADDY_HOST:-:80}
+      OBS_USER: admin
+      OBS_PASS_HASH: $$2a$$14$$J9faJ6XqDXT0GeKtSm8J4OQY9j4Bdl/6jaYzeZFo8eW2V3JsML4Qq
+    networks:
+      - bench-front
+    depends_on:
+      - frontend
+      - api
+      - observability
+    deploy:
+      replicas: 1                     # single TLS entry point; certs on caddy-data volume
+      placement:
+        constraints:
+          - node.role == manager      # pin to manager so caddy-data persists
+      restart_policy:
+        condition: on-failure
+        max_attempts: 5
+        delay: 5s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first             # must stop to release port binding
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    networks:
+      - bench-infra
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      replicas: 1                     # stateful; scale via Redis Cluster for HA
+      placement:
+        constraints:
+          - node.role == manager      # pin for data persistence
+      restart_policy:
+        condition: on-failure
+        max_attempts: 5
+        delay: 5s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  api:
+    image: ${REGISTRY:-ghcr.io/benchmark}/benchmark-api:${TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: services/api/Dockerfile
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      API_PORT: "3000"
+      OBS_HOST: observability
+      OBS_PORT: "3002"
+    volumes:
+      - submissions:/submissions
+    networks:
+      - bench-infra
+      - bench-front
+    deploy:
+      replicas: 2                     # stateless — scale horizontally
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        delay: 5s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first            # rolling update with no downtime
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  worker:
+    image: ${REGISTRY:-ghcr.io/benchmark}/benchmark-worker:${TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: services/worker/Dockerfile
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      DOCKER_HOST: tcp://docker-daemon:2375
+      SECCOMP_PROFILE: /etc/docker/seccomp/bench-engine.json
+      # Optional gVisor — requires host installation: https://gvisor.dev/docs/user_guide/install/
+      # DOCKER_RUNTIME: runsc
+    volumes:
+      - submissions:/submissions
+      - ../../infra/seccomp:/etc/docker/seccomp:ro
+    networks:
+      - bench-infra
+      - bench-docker
+    deploy:
+      replicas: 2                     # each replica handles one job at a time via BullMQ fan-out
+      placement:
+        constraints:
+          - node.labels.role == worker  # must co-locate with docker-daemon on worker nodes
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        delay: 10s
+      update_config:
+        parallelism: 1
+        delay: 30s                    # allow in-flight benchmark runs to complete
+        order: stop-first
+      resources:
+        limits:
+          cpus: '2.0'                 # fleet binary needs headroom for coroutine threads
+          memory: 1G
+
+  docker-daemon:
+    image: docker:24-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["dockerd", "--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+    volumes:
+      - docker-data:/var/lib/docker
+      - ../../infra/seccomp:/etc/docker/seccomp:ro
+    networks:
+      - bench-docker
+    deploy:
+      replicas: 2                     # one per worker node; same replica count as worker
+      placement:
+        constraints:
+          - node.labels.role == worker
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        delay: 10s
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G                  # image build cache lives here
+
+  observability:
+    image: ${REGISTRY:-ghcr.io/benchmark}/benchmark-observability:${TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: services/observability/Dockerfile
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      OBS_PORT: "3002"
+    networks:
+      - bench-infra
+      - bench-front
+    deploy:
+      replicas: 2                     # stateless read path — scale horizontally
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        delay: 5s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  frontend:
+    image: ${REGISTRY:-ghcr.io/benchmark}/benchmark-frontend:${TAG:-latest}
+    build:
+      context: ../../services/frontend
+      dockerfile: Dockerfile
+      args:
+        API_URL: http://api:3000
+        OBS_URL: http://observability:3002
+    networks:
+      - bench-front
+    deploy:
+      replicas: 2                     # Next.js standalone — scale horizontally
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        delay: 5s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M

@@ -31,7 +31,7 @@ submitRouter.post('/submit', upload.single('file'), async (req, res) => {
   }
 
   const rawBots = typeof req.body?.botCount === 'string' ? req.body.botCount : '';
-  const botCount = Math.min(500, Math.max(1, parseInt(rawBots) || 50));
+  const botCount = Math.min(2000, Math.max(1, parseInt(rawBots) || 50));
 
   const submitDir = path.join('/submissions', teamId, Date.now().toString());
   await mkdir(submitDir, { recursive: true });

@@ -20,7 +20,8 @@ interface Entry {
   score: number;
   details?: {
     correctness?: number;
-    metrics?: { p50: number; p90: number; p99: number; tps: number };
+    stability?: number;
+    metrics?: { p50: number; p90: number; p99: number; tps: number; stability: number };
     timestamp?: number;
     tradeStats?: TradeStats;
   };
@@ -279,16 +280,15 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
       <TradeAnalyticsPanel entries={entries} />
       <div style={{ overflowX: 'auto' }}>
         <div className="grid gap-x-3 text-xs tracking-widest mb-1 pb-1"
-        style={{ gridTemplateColumns: '56px 1fr 70px 90px 72px 82px 72px 130px 72px 72px 84px',
+        style={{ gridTemplateColumns: '56px 1fr 70px 80px 130px 90px 55px 65px 65px 84px',
           color: 'var(--term-muted)', borderBottom: '1px solid var(--term-border)' }}>
         <span>RANK</span>
         <span>TEAM</span>
         <span className="text-right">SCORE</span>
         <span className="text-right">PNL</span>
-        <span className="text-right">POSITION</span>
-        <span className="text-right">VOL</span>
-        <span className="text-right">FILLS</span>
         <span className="text-right">CORRECTNESS</span>
+        <span className="text-right">STABILITY</span>
+        <span className="text-right">P50</span>
         <span className="text-right">P99</span>
         <span className="text-right">TPS</span>
         <span className="text-right">TIME</span>
@@ -299,6 +299,7 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
         const ts = e.details?.timestamp;
         const corr = e.details?.correctness;
         const trade = e.details?.tradeStats;
+        const stab = e.details?.stability;
         const pnlColor = trade?.realizedPnl == null ? 'var(--term-muted)'
           : trade.realizedPnl > 0 ? 'var(--term-green)'
           : trade.realizedPnl < 0 ? 'var(--term-error)' : 'var(--term-muted)';
@@ -310,12 +311,16 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
           : corr >= 0.95 ? 'var(--glow)'
           : corr >= 0.70 ? 'var(--glow-amber,0 0 6px rgba(255,176,0,0.5))'
           : '0 0 6px rgba(255,51,51,0.5)';
+        const stabColor = stab == null ? 'var(--term-muted)'
+          : stab >= 0.99 ? 'var(--term-green)'
+          : stab >= 0.90 ? 'var(--term-amber)'
+          : 'var(--term-error)';
 
         return (
           <div key={e.team}
             className="grid gap-x-3 text-xs items-center py-1"
             style={{
-              gridTemplateColumns: '56px 1fr 70px 90px 72px 82px 72px 130px 72px 72px 84px',
+              gridTemplateColumns: '56px 1fr 70px 80px 130px 90px 55px 65px 65px 84px',
               borderBottom: '1px solid var(--term-dim)',
               background: i === 0 ? 'rgba(51,255,0,0.025)' : 'transparent',
             }}>
@@ -331,18 +336,17 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
             <span className="text-right" style={{ color: pnlColor, textShadow: pnlColor !== 'var(--term-muted)' ? 'var(--glow)' : 'none' }}>
               {moneyLabel(trade?.realizedPnl)}
             </span>
-            <span className="text-right" style={{ color: trade?.netPosition != null ? 'var(--term-green)' : 'var(--term-muted)' }}>
-              {trade?.netPosition != null ? trade.netPosition : '—'}
-            </span>
-            <span className="text-right" style={{ color: trade?.volumeUsd != null ? 'var(--term-green)' : 'var(--term-muted)' }}>
-              {trade?.volumeUsd != null ? '$' + trade.volumeUsd.toLocaleString() : '—'}
-            </span>
-            <span className="text-right" style={{ color: trade?.fillCount != null ? 'var(--term-green)' : 'var(--term-muted)' }}>
-              {trade?.fillCount != null ? trade.fillCount : '—'}
-            </span>
             <span className="text-right font-mono text-xs"
               style={{ color: corrColor, textShadow: corrGlow }}>
               {corr != null ? bar(corr) + ' ' + (corr * 100).toFixed(0) + '%' : '——'}
+            </span>
+            <span className="text-right font-mono text-xs"
+              style={{ color: stabColor }}>
+              {stab != null ? bar(stab) + ' ' + (stab * 100).toFixed(0) + '%' : '——'}
+            </span>
+            <span className="text-right"
+              style={{ color: m?.p50 != null ? 'var(--term-green)' : 'var(--term-muted)' }}>
+              {m?.p50 != null ? m.p50 + 'ms' : '——'}
             </span>
             <span className="text-right"
               style={{ color: m?.p99 != null ? 'var(--term-green)' : 'var(--term-muted)',
@@ -440,14 +444,14 @@ function SubmitPanel({ session }: { session: Session }) {
         <div>
           <div className="text-[11px] mb-1" style={{ color: 'var(--term-muted)' }}>
             {'> BOT_COUNT'}&nbsp;
-            <span style={{ color: 'var(--term-muted)' }}>— bots hitting engine simultaneously (max 500)</span>
+            <span style={{ color: 'var(--term-muted)' }}>— bots hitting engine simultaneously (max 2000)</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-[11px]" style={{ color: 'var(--term-muted)', whiteSpace: 'nowrap' }}>
               bench:~$
             </span>
             <input
-              type="range" min={10} max={500} step={10}
+              type="range" min={10} max={2000} step={10}
               value={botCount}
               onChange={e => setBotCount(Number(e.target.value))}
               className="flex-1 accent-term-green"
@@ -678,7 +682,7 @@ export default function HomePage() {
       <div className="flex justify-between text-[11px] mb-2" style={{ color: 'var(--term-muted)' }}>
         <span>
           {'> '}<span className="glow" style={{ color: 'var(--term-green)' }}>{entries.length}</span>
-          {' submissions ranked   score=0.4×correctness+0.2×latency+0.4×trade   max=1000   trade stats shown for pnl/position/volume'}
+          {' submissions ranked   score=0.5×correctness+0.3×latency+0.2×stability   max=1000'}
           {error && <span className="ml-3" style={{ color: 'var(--term-error)' }}>[ERR] {error}</span>}
         </span>
         <span className="flex items-center gap-3">
