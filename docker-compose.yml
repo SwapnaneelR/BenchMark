@@ -1,10 +1,24 @@
 version: '3.8'
 
+# Two named networks keep the attack surface minimal:
+#   bench-infra (internal=true): redis, api, worker, observability — no internet routing
+#   bench-front:                 api, observability, frontend — browser-accessible services
+#
+# Submission engine containers get their own ephemeral --internal network per run
+# (created/destroyed dynamically by worker/src/docker.ts).
+
+networks:
+  bench-infra:
+    driver: bridge
+    internal: true
+  bench-front:
+    driver: bridge
+
 services:
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    networks:
+      - bench-infra
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -24,6 +38,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - bench-infra
+      - bench-front
     volumes:
       - submissions:/submissions
 
@@ -34,10 +51,18 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      ENGINE_HOST: host.docker.internal
+      # Optional: set DOCKER_RUNTIME=runsc after installing gVisor on host.
+      # Install guide: https://gvisor.dev/docs/user_guide/install/
+      # DOCKER_RUNTIME: runsc
+      #
+      # Optional: path on the Docker HOST (not inside worker) to the seccomp allowlist.
+      # Setup: cp infra/seccomp/bench-engine.json /etc/docker/seccomp/bench-engine.json
+      # SECCOMP_PROFILE: /etc/docker/seccomp/bench-engine.json
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - bench-infra
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - submissions:/submissions
@@ -55,9 +80,15 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       OBS_PORT: 3002
+      # Set these to enable HTTP Basic Auth on all observability routes.
+      # OBS_USER: admin
+      # OBS_PASS: changeme
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - bench-infra
+      - bench-front
 
   frontend:
     build:
@@ -71,6 +102,8 @@ services:
     depends_on:
       - api
       - observability
+    networks:
+      - bench-front
 
 volumes:
   submissions:

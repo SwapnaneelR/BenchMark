@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { mkdir } from 'fs/promises';
 import { createReadStream, readdirSync, statSync, existsSync } from 'fs';
+import { hostname } from 'os';
 import path from 'path';
 import WebSocket from 'ws';
 import unzipper from 'unzipper';
@@ -69,18 +70,94 @@ export async function buildImage(contextDir: string, tag: string): Promise<void>
   if (stderr) console.log('[docker build]', stderr);
 }
 
-export async function runContainer(tag: string): Promise<{ id: string; port: number }> {
-  const { stdout: idOut } = await execWithLogs(
-    `docker run -d --cpus=1 --memory=512m --pids-limit=512 --cap-drop=ALL -p 9000 ${tag}`,
+// ── Per-run ephemeral network ─────────────────────────────────────────────────
+
+/**
+ * Returns worker container's own ID so we can connect/disconnect it from
+ * ephemeral networks. Docker sets hostname = short container ID (12 hex chars).
+ */
+function workerSelfId(): string {
+  return hostname();
+}
+
+/**
+ * Create an --internal bridge network for one benchmark run.
+ * --internal: no default route to internet; engine container cannot phone home
+ * and cannot reach other containers outside the network.
+ */
+export async function createBenchNetwork(runId: string): Promise<string> {
+  const name = `bench-${runId}`;
+  await execWithLogs(
+    `docker network create --driver bridge --internal --label bench=true ${name}`,
   );
-  const id = idOut.trim();
+  console.log(`[docker] Created isolated network ${name}`);
+  return name;
+}
 
-  await new Promise(r => setTimeout(r, 500));
+/** Attach the worker container itself so its subprocess fleet binary can reach the engine. */
+export async function connectWorkerToNetwork(network: string): Promise<void> {
+  const id = workerSelfId();
+  await execWithLogs(`docker network connect ${network} ${id}`);
+}
 
-  const { stdout: portOut } = await execWithLogs(`docker port ${id} 9000`);
-  const portMatch = portOut.match(/:(\d+)/);
-  if (!portMatch) throw new Error(`Could not parse port from: ${portOut}`);
-  return { id, port: parseInt(portMatch[1]) };
+export async function disconnectWorkerFromNetwork(network: string): Promise<void> {
+  const id = workerSelfId();
+  await execAsync(`docker network disconnect ${network} ${id}`).catch(() => {});
+}
+
+export async function removeBenchNetwork(name: string): Promise<void> {
+  await execAsync(`docker network rm ${name}`).catch(() => {});
+}
+
+// ── Container lifecycle ───────────────────────────────────────────────────────
+
+/**
+ * Run a submission container hardened for untrusted code.
+ *
+ * Isolation layers applied here:
+ *   --cap-drop=ALL               no Linux capabilities
+ *   --security-opt no-new-privileges  blocks setuid/setcap escalation
+ *   --security-opt seccomp=...   syscall allowlist (if SECCOMP_PROFILE env set)
+ *   --read-only                  immutable rootfs; can't write malware to disk
+ *   --tmpfs /tmp                 writable scratch only in tmpfs; noexec+nosuid
+ *   --network <bench-net>        isolated per-run bridge, no internet egress
+ *   --cpus / --memory / --pids   resource quotas
+ *   --runtime=runsc (optional)   gVisor kernel sandbox (set DOCKER_RUNTIME=runsc)
+ *
+ * SECCOMP_PROFILE: host path to infra/seccomp/bench-engine.json.
+ *   Must be on the Docker host filesystem, not inside the worker container.
+ *   Setup: cp infra/seccomp/bench-engine.json /etc/docker/seccomp/bench-engine.json
+ *   Then set SECCOMP_PROFILE=/etc/docker/seccomp/bench-engine.json in worker env.
+ *
+ * DOCKER_RUNTIME: set to "runsc" after installing gVisor on the host.
+ *   Setup: https://gvisor.dev/docs/user_guide/install/
+ *   Then: dockerd --add-runtime runsc=/usr/bin/runsc (or via daemon.json)
+ */
+export async function runContainer(
+  tag: string,
+  network: string,
+  containerName: string,
+): Promise<{ id: string }> {
+  const runtime = process.env.DOCKER_RUNTIME;
+  const seccompProfile = process.env.SECCOMP_PROFILE;
+
+  const runtimeArg     = runtime       ? `--runtime=${runtime}` : '';
+  const seccompArg     = seccompProfile ? `--security-opt seccomp=${seccompProfile}` : '';
+
+  const { stdout: idOut } = await execWithLogs(
+    `docker run -d \
+      --name ${containerName} \
+      ${runtimeArg} \
+      --cpus=1 --memory=512m --pids-limit=512 \
+      --cap-drop=ALL \
+      --security-opt no-new-privileges \
+      ${seccompArg} \
+      --read-only \
+      --tmpfs /tmp:noexec,nosuid,size=64m \
+      --network ${network} \
+      ${tag}`,
+  );
+  return { id: idOut.trim() };
 }
 
 export async function removeContainer(id: string): Promise<void> {
