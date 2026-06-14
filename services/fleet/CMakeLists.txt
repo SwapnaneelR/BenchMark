@@ -8,4 +8,8 @@ find_package(Threads REQUIRED)
 
 add_executable(fleet src/main.cpp src/order_gen.cpp)
 target_link_libraries(fleet PRIVATE Boost::system Threads::Threads)
-target_compile_options(fleet PRIVATE -O3)
+
+# -Os: optimize for size (fleet is not the latency bottleneck; engine is)
+# -static: self-contained binary; no boost-libs needed in runtime image
+target_compile_options(fleet PRIVATE -Os)
+set_target_properties(fleet PROPERTIES LINK_FLAGS "-static -static-libgcc -static-libstdc++")
