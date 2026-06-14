@@ -1,8 +1,10 @@
-version: '3.8'
-
-# Two named networks keep the attack surface minimal:
+# Three named networks keep the attack surface minimal:
 #   bench-infra (internal=true): redis, api, worker, observability — no internet routing
 #   bench-front:                 proxy, api, observability, frontend — browser-accessible services
+#   bench-docker (internal):     dedicated Docker daemon access for worker only
+#
+# Worker does not mount the host Docker socket directly. Instead it uses an internal
+# Docker daemon service for sandbox build/run operations.
 #
 # Submission engine containers get their own ephemeral --internal network per run
 # (created/destroyed dynamically by worker/src/docker.ts).
@@ -16,6 +18,8 @@ networks:
     driver: bridge
     internal: true
   bench-front:
+    driver: bridge
+  bench-docker:
     driver: bridge
 
 services:
@@ -52,6 +56,19 @@ services:
       timeout: 3s
       retries: 5
 
+  docker-daemon:
+    image: docker:24-dind
+    restart: unless-stopped
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["dockerd", "--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+    networks:
+      - bench-docker
+    volumes:
+      - docker-data:/var/lib/docker
+      - ./infra/seccomp:/etc/docker/seccomp:ro
+
   api:
     build:
       context: .
@@ -80,21 +97,22 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      DOCKER_HOST: tcp://docker-daemon:2375
+      SECCOMP_PROFILE: /etc/docker/seccomp/bench-engine.json
       # Optional: set DOCKER_RUNTIME=runsc after installing gVisor on host.
       # Install guide: https://gvisor.dev/docs/user_guide/install/
       # DOCKER_RUNTIME: runsc
-      #
-      # Optional: path on the Docker HOST (not inside worker) to the seccomp allowlist.
-      # Setup: cp infra/seccomp/bench-engine.json /etc/docker/seccomp/bench-engine.json
-      # SECCOMP_PROFILE: /etc/docker/seccomp/bench-engine.json
     depends_on:
       redis:
         condition: service_healthy
+      docker-daemon:
+        condition: service_started
     networks:
       - bench-infra
+      - bench-docker
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - submissions:/submissions
+      - ./infra/seccomp:/etc/docker/seccomp:ro
     # On Linux, uncomment:
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
@@ -132,5 +150,6 @@ services:
 volumes:
   submissions:
   redis-data:
+  docker-data:
   caddy-data:
   caddy-config:

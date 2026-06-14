@@ -120,7 +120,7 @@ export async function removeBenchNetwork(name: string): Promise<void> {
  *   --security-opt seccomp=...   syscall allowlist (if SECCOMP_PROFILE env set)
  *   --read-only                  immutable rootfs; can't write malware to disk
  *   --tmpfs /tmp                 writable scratch only in tmpfs; noexec+nosuid
- *   --network <bench-net>        isolated per-run bridge, no internet egress
+ *   --network bridge             engine connects via daemon-side bridge network and published port
  *   --cpus / --memory / --pids   resource quotas
  *   --runtime=runsc (optional)   gVisor kernel sandbox (set DOCKER_RUNTIME=runsc)
  *
@@ -135,9 +135,8 @@ export async function removeBenchNetwork(name: string): Promise<void> {
  */
 export async function runContainer(
   tag: string,
-  network: string,
   containerName: string,
-): Promise<{ id: string }> {
+): Promise<{ id: string; hostPort: number }> {
   const runtime = process.env.DOCKER_RUNTIME;
   const seccompProfile = process.env.SECCOMP_PROFILE;
 
@@ -154,10 +153,17 @@ export async function runContainer(
       ${seccompArg} \
       --read-only \
       --tmpfs /tmp:noexec,nosuid,size=64m \
-      --network ${network} \
+      --network bridge \
+      --publish 0:9000/tcp \
       ${tag}`,
   );
-  return { id: idOut.trim() };
+  const id = idOut.trim();
+  const { stdout: portOut } = await execWithLogs(`docker port ${id} 9000/tcp`);
+  const match = portOut.trim().match(/.*:(\d+)$/);
+  if (!match) {
+    throw new Error(`Unable to determine published port for container ${id}`);
+  }
+  return { id, hostPort: Number(match[1]) };
 }
 
 export async function removeContainer(id: string): Promise<void> {

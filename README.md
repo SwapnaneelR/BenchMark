@@ -8,22 +8,27 @@ Teams submit a Docker image exposing a WebSocket server on port 9000. The platfo
 docker compose up --build
 ```
 
-| Service       | URL                       |
-|---------------|---------------------------|
-| Frontend UI   | http://localhost:3001     |
-| API           | http://localhost:3000     |
-| Observability | http://localhost:3002     |
+| Service       | URL                             |
+|---------------|---------------------------------|
+| Frontend UI   | http://localhost                |
+| API           | http://localhost/api            |
+| Observability | http://localhost/admin          |
 
 > **Linux users:** uncomment `extra_hosts` in `docker-compose.yml` for the worker service before starting.
+> 
+> **Security note:** worker builds and runs submission containers through an internal Docker daemon service instead of mounting the host Docker socket directly.
+> 
+> Note: those submission containers are created inside the internal `docker-daemon` service and are not visible in your host Docker Desktop container list.
+> They are also removed after each benchmark run completes.
 
 ## Submitting an Engine
 
-**Via the UI** — open http://localhost:3001, go to the `[./submit]` tab, enter your team name, upload a `.zip` file, and click `[ ./submit --run ]`.
+**Via the UI** — open `http://localhost`, go to the `[./submit]` tab, enter your team name, upload a `.zip` file, and click `[ ./submit --run ]`.
 
 **Via curl:**
 ```bash
 curl -X POST -F "file=@engine.zip" \
-  "http://localhost:3000/submit?team=yourteam"
+  "http://localhost/api/submit?team=yourteam"
 ```
 
 ### Zip requirements
@@ -55,7 +60,8 @@ To submit the sample engine:
 cd sample-engine
 zip -r ../sample.zip .
 curl -X POST -F "file=@../sample.zip" \
-  "http://localhost:3000/submit?team=sample"
+  "http://localhost/api/submit" \
+  -H "X-Team-Id: sample"
 ```
 
 ## Live Logs
