@@ -71,6 +71,7 @@ services:
       - ./infra/seccomp:/etc/docker/seccomp:ro
 
   api:
+    image: ghcr.io/swapnaneelr/benchmark-api:latest
     build:
       context: .
       dockerfile: services/api/Dockerfile
@@ -91,6 +92,7 @@ services:
       - submissions:/submissions
 
   worker:
+    image: ghcr.io/swapnaneelr/benchmark-worker:latest
     build:
       context: .
       dockerfile: services/worker/Dockerfile
@@ -119,6 +121,7 @@ services:
     #   - "host.docker.internal:host-gateway"
 
   observability:
+    image: ghcr.io/swapnaneelr/benchmark-observability:latest
     build:
       context: .
       dockerfile: services/observability/Dockerfile
@@ -135,6 +138,7 @@ services:
       - bench-front
 
   frontend:
+    image: ghcr.io/swapnaneelr/benchmark-frontend:latest
     build:
       context: services/frontend
       dockerfile: Dockerfile
