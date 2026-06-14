@@ -7,11 +7,18 @@
         reverse_proxy api:3000
     }
 
-    # Observability — admin only, basic auth gate, strip /admin prefix
-    handle_path /admin/* {
+    # Observability root — auth gate (only this page requires credentials)
+    @obs-root path /admin/
+    handle @obs-root {
         basic_auth {
             {$OBS_USER} {$OBS_PASS_HASH}
         }
+        uri strip_prefix /admin
+        reverse_proxy observability:3002
+    }
+
+    # Observability API sub-routes — no auth needed (port 3002 not published, only reachable via Caddy)
+    handle_path /admin/* {
         reverse_proxy observability:3002
     }
 
