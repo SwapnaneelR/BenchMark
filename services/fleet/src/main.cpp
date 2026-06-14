@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -14,6 +15,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "order_gen.h"
@@ -27,6 +29,20 @@ using tcp       = asio::ip::tcp;
 static std::mutex           g_mtx;
 static std::vector<int64_t> g_latencies_ms;
 static std::atomic<int64_t> g_acks{0};
+
+struct BotStats {
+    int64_t acks = 0;
+    int64_t rejects = 0;
+    int64_t fillCount = 0;
+    int64_t filledOrders = 0;
+    int64_t filledQty = 0;
+    int64_t volumeUsd = 0;
+    int64_t netPosition = 0;
+    double costBasis = 0;
+    double realizedPnl = 0;
+};
+
+static BotStats g_aggStats;
 
 static int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -65,6 +81,23 @@ static std::string jsonGet(const std::string& s, const char* key) {
     return s.substr(pos, end - pos);
 }
 
+static int jsonGetInt(const std::string& s, const char* key, int defaultValue = 0) {
+    std::string needle = std::string("\"") + key + "\":";
+    auto pos = s.find(needle);
+    if (pos == std::string::npos) return defaultValue;
+    pos += needle.size();
+    while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) pos++;
+    int sign = 1;
+    if (pos < s.size() && (s[pos] == '+' || s[pos] == '-')) {
+        if (s[pos] == '-') sign = -1;
+        pos++;
+    }
+    auto end = pos;
+    while (end < s.size() && std::isdigit(static_cast<unsigned char>(s[end]))) end++;
+    if (end == pos) return defaultValue;
+    return std::stoi(s.substr(pos, end - pos)) * sign;
+}
+
 asio::awaitable<void> runBot(
     std::string host,
     std::string port_str,
@@ -93,11 +126,18 @@ asio::awaitable<void> runBot(
 
         std::unordered_map<std::string, int64_t> pending;
         pending.reserve(orders.size());
+        std::unordered_map<std::string, std::string> sideById;
+        sideById.reserve(orders.size());
+        BotStats stats;
+        std::unordered_set<std::string> seenFilledOrders;
 
         // Send all orders (fire-and-forget into TCP send buffer).
         for (const auto& order : orders) {
-            auto msg       = orderToJson(order);
+            auto msg = orderToJson(order);
             pending[order.id] = nowMs();
+            if (order.type != Order::Type::Cancel) {
+                sideById[order.id] = order.side;
+            }
             co_await ws.async_write(asio::buffer(msg), asio::use_awaitable);
         }
 
@@ -120,14 +160,55 @@ asio::awaitable<void> runBot(
             auto type = jsonGet(text, "type");
             if (type == "Ack" || type == "Reject") {
                 ++received;
+                if (type == "Reject") {
+                    ++stats.rejects;
+                }
                 auto id  = jsonGet(text, "id");
                 auto it  = pending.find(id);
                 if (it != pending.end()) {
                     local.push_back(nowMs() - it->second);
                     pending.erase(it);
                 }
+                ++stats.acks;
+            } else if (type == "Fill") {
+                auto id = jsonGet(text, "id");
+                auto qty = jsonGetInt(text, "qty");
+                auto price = jsonGetInt(text, "price");
+                if (qty > 0 && price > 0) {
+                    ++stats.fillCount;
+                    stats.filledQty += qty;
+                    stats.volumeUsd += static_cast<int64_t>(price) * qty;
+                    if (seenFilledOrders.insert(id).second) {
+                        ++stats.filledOrders;
+                    }
+                    const auto it = sideById.find(id);
+                    const auto side = it != sideById.end() ? it->second : "Buy";
+                    const int sideSign = side == "Sell" ? -1 : 1;
+                    const int64_t prevPosition = stats.netPosition;
+                    if (prevPosition == 0 || (prevPosition > 0) == (sideSign > 0)) {
+                        stats.netPosition += sideSign * qty;
+                        stats.costBasis += sideSign * static_cast<double>(price) * qty;
+                    } else {
+                        const int64_t closeQty = std::min<int64_t>(static_cast<int64_t>(std::llabs(prevPosition)), static_cast<int64_t>(qty));
+                        const double avgCost = std::abs(stats.costBasis) / std::max<int64_t>(1, static_cast<int64_t>(std::llabs(prevPosition)));
+                        if (prevPosition > 0) {
+                            stats.realizedPnl += closeQty * (price - avgCost);
+                        } else {
+                            stats.realizedPnl += closeQty * (avgCost - price);
+                        }
+                        stats.netPosition += sideSign * closeQty;
+                        stats.costBasis -= std::copysign(avgCost * closeQty, static_cast<double>(prevPosition));
+                        if (qty > closeQty) {
+                            const int64_t remainder = qty - closeQty;
+                            stats.netPosition += sideSign * remainder;
+                            stats.costBasis += sideSign * static_cast<double>(price) * remainder;
+                        }
+                        if (stats.netPosition == 0) {
+                            stats.costBasis = 0;
+                        }
+                    }
+                }
             }
-            // Fill messages: engine sends Fill before Ack for matched orders; skip here.
         }
 
         boost::system::error_code ec2;
@@ -138,6 +219,14 @@ asio::awaitable<void> runBot(
         {
             std::lock_guard<std::mutex> lk(g_mtx);
             g_latencies_ms.insert(g_latencies_ms.end(), local.begin(), local.end());
+            g_aggStats.acks += stats.acks;
+            g_aggStats.rejects += stats.rejects;
+            g_aggStats.fillCount += stats.fillCount;
+            g_aggStats.filledOrders += stats.filledOrders;
+            g_aggStats.filledQty += stats.filledQty;
+            g_aggStats.volumeUsd += stats.volumeUsd;
+            g_aggStats.netPosition += stats.netPosition;
+            g_aggStats.realizedPnl += stats.realizedPnl;
         }
 
     } catch (const std::exception& e) {
@@ -213,16 +302,28 @@ int main(int argc, char* argv[]) {
     int64_t tps       = durationMs > 0 ? totalAcks * 1000 / durationMs : 0;
 
     std::cerr << "[fleet] " << botCount << " bots, " << totalAcks
-              << " acks, " << durationMs << "ms, TPS=" << tps << "\n";
+              << " acks, " << durationMs << "ms, TPS=" << tps
+              << ", filledOrders=" << g_aggStats.filledOrders
+              << ", volumeUsd=" << g_aggStats.volumeUsd
+              << ", pnl=" << g_aggStats.realizedPnl << "\n";
 
     std::ofstream out(resultsFile);
-    out << "{\"acks\":" << totalAcks << ",\"tps\":" << tps << ",\"latencies_ms\":[";
+    out << "{\"acks\":" << totalAcks
+        << ",\"tps\":" << tps
+        << ",\"latencies_ms\": [";
     const auto& lats = g_latencies_ms;
     for (size_t j = 0; j < lats.size(); ++j) {
         if (j) out << ',';
         out << lats[j];
     }
-    out << "]}\n";
+    out << "],\"rejectCount\":" << g_aggStats.rejects
+        << ",\"fillCount\":" << g_aggStats.fillCount
+        << ",\"filledOrders\":" << g_aggStats.filledOrders
+        << ",\"filledQty\":" << g_aggStats.filledQty
+        << ",\"volumeUsd\":" << g_aggStats.volumeUsd
+        << ",\"realizedPnl\":" << g_aggStats.realizedPnl
+        << ",\"netPosition\":" << g_aggStats.netPosition
+        << "}\n";
 
     return 0;
 }

@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import { readFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
+import type { TradeStats } from './trading';
 
 const execFileAsync = promisify(execFile);
 
@@ -13,7 +14,7 @@ export class BotFleet {
     private redis?: unknown,
   ) {}
 
-  async run(botCount = 50, ordersPerBot = 100): Promise<{ latencies: number[]; tps: number }> {
+  async run(botCount = 50, ordersPerBot = 100): Promise<{ latencies: number[]; tps: number; tradeStats: TradeStats }> {
     const resultsFile = path.join(tmpdir(), `fleet-${this.runId}.json`);
 
     try {
@@ -38,8 +39,30 @@ export class BotFleet {
     const raw = await readFile(resultsFile, 'utf8');
     await unlink(resultsFile).catch(() => {});
 
-    const result = JSON.parse(raw) as { acks: number; tps: number; latencies_ms: number[] };
-    console.log(`[fleet] ${result.acks} acks, TPS=${result.tps}`);
-    return { latencies: result.latencies_ms, tps: result.tps };
+    const result = JSON.parse(raw) as {
+      acks: number;
+      tps: number;
+      latencies_ms: number[];
+      rejectCount?: number;
+      fillCount?: number;
+      filledOrders?: number;
+      filledQty?: number;
+      volumeUsd?: number;
+      realizedPnl?: number;
+      netPosition?: number;
+    };
+    const tradeStats: TradeStats = {
+      totalOrders: botCount * ordersPerBot,
+      ackedOrders: result.acks - (result.rejectCount ?? 0),
+      rejectedOrders: result.rejectCount ?? 0,
+      fillCount: result.fillCount ?? 0,
+      filledOrders: result.filledOrders ?? 0,
+      filledQty: result.filledQty ?? 0,
+      volumeUsd: result.volumeUsd ?? 0,
+      realizedPnl: result.realizedPnl ?? 0,
+      netPosition: result.netPosition ?? 0,
+    };
+    console.log(`[fleet] ${result.acks} acks, TPS=${result.tps}, filledOrders=${tradeStats.filledOrders}, volumeUsd=${tradeStats.volumeUsd}`);
+    return { latencies: result.latencies_ms, tps: result.tps, tradeStats };
   }
 }

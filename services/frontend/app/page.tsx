@@ -7,6 +7,13 @@ import * as Tabs from '@radix-ui/react-tabs';
 
 interface Session { teamId: string; name: string; }
 
+interface TradeStats {
+  fillCount?: number;
+  volumeUsd?: number;
+  realizedPnl?: number;
+  netPosition?: number;
+}
+
 interface Entry {
   rank: number;
   team: string;
@@ -15,6 +22,7 @@ interface Entry {
     correctness?: number;
     metrics?: { p50: number; p90: number; p99: number; tps: number };
     timestamp?: number;
+    tradeStats?: TradeStats;
   };
 }
 
@@ -47,6 +55,96 @@ function scoreLabel(s: number) {
   if (s >= 800) return 'text-term-green glow';
   if (s >= 500) return 'text-term-amber';
   return 'text-term-error';
+}
+
+function moneyLabel(amount?: number) {
+  if (amount == null) return '——';
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+  return `${sign}$${Math.abs(amount).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+}
+
+function formatNumber(value?: number) {
+  if (value == null) return '—';
+  return value.toLocaleString();
+}
+
+function gaugeWidth(value: number, maxValue: number, width = 120) {
+  const ratio = maxValue > 0 ? Math.min(1, Math.abs(value) / maxValue) : 0;
+  return Math.round(ratio * width);
+}
+
+function TradeAnalyticsPanel({ entries }: { entries: Entry[] }) {
+  const ranking = entries
+    .map(e => ({ team: e.team, trade: e.details?.tradeStats, score: e.score }))
+    .filter(item => item.trade?.realizedPnl != null)
+    .slice(0, 5);
+
+  if (ranking.length === 0) return null;
+
+  const maxAbsPnl = Math.max(...ranking.map(r => Math.abs(r.trade!.realizedPnl!)), 1);
+  const maxAbsPosition = Math.max(...ranking.map(r => Math.abs(r.trade!.netPosition ?? 0)), 1);
+  const maxVolume = Math.max(...ranking.map(r => r.trade!.volumeUsd ?? 0), 1);
+
+  return (
+    <div className="mb-4 p-3" style={{ border: '1px solid var(--term-border)', borderRadius: '8px' }}>
+      <div className="flex justify-between items-center mb-3" style={{ fontSize: '11px', color: 'var(--term-muted)' }}>
+        <span>live trade analytics · top submissions</span>
+        <span style={{ color: 'var(--term-green)' }}>graphs updated every second</span>
+      </div>
+
+      <div className="space-y-2">
+        {ranking.map((row, index) => {
+          const pnl = row.trade!.realizedPnl!;
+          const pos = row.trade!.netPosition ?? 0;
+          const vol = row.trade!.volumeUsd ?? 0;
+          const pnlWidth = gaugeWidth(pnl, maxAbsPnl);
+          const posWidth = gaugeWidth(pos, maxAbsPosition);
+          const volWidth = gaugeWidth(vol, maxVolume);
+          return (
+            <div key={row.team} className="flex items-center gap-3" style={{ fontSize: '11px' }}>
+              <div style={{ minWidth: '98px', color: 'var(--term-green)' }}>
+                {index + 1}. {row.team}
+              </div>
+              <div style={{ minWidth: '50px', color: 'var(--term-green)' }}>S{row.score}</div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="flex justify-between mb-1" style={{ color: 'var(--term-muted)' }}>
+                  <span>PNL</span>
+                  <span>{moneyLabel(pnl)}</span>
+                </div>
+                <div style={{ display: 'flex', height: '10px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ width: `${pnlWidth}px`, background: pnl >= 0 ? 'rgba(51,255,51,0.75)' : 'rgba(255,51,51,0.85)' }} />
+                  <div style={{ flex: 1 }} />
+                </div>
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="flex justify-between mb-1" style={{ color: 'var(--term-muted)' }}>
+                  <span>POSITION</span>
+                  <span>{formatNumber(pos)}</span>
+                </div>
+                <div style={{ display: 'flex', height: '10px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ width: `${posWidth}px`, background: 'rgba(51,255,255,0.55)' }} />
+                  <div style={{ flex: 1 }} />
+                </div>
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="flex justify-between mb-1" style={{ color: 'var(--term-muted)' }}>
+                  <span>VOL</span>
+                  <span>{'$' + formatNumber(vol)}</span>
+                </div>
+                <div style={{ display: 'flex', height: '10px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ width: `${volWidth}px`, background: 'rgba(255,215,0,0.75)' }} />
+                  <div style={{ flex: 1 }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 const SESSION_KEY = 'bench_session';
@@ -177,13 +275,19 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <div className="grid gap-x-3 text-xs tracking-widest mb-1 pb-1"
-        style={{ gridTemplateColumns: '56px 1fr 70px 130px 72px 72px 84px',
+    <>
+      <TradeAnalyticsPanel entries={entries} />
+      <div style={{ overflowX: 'auto' }}>
+        <div className="grid gap-x-3 text-xs tracking-widest mb-1 pb-1"
+        style={{ gridTemplateColumns: '56px 1fr 70px 90px 72px 82px 72px 130px 72px 72px 84px',
           color: 'var(--term-muted)', borderBottom: '1px solid var(--term-border)' }}>
         <span>RANK</span>
         <span>TEAM</span>
         <span className="text-right">SCORE</span>
+        <span className="text-right">PNL</span>
+        <span className="text-right">POSITION</span>
+        <span className="text-right">VOL</span>
+        <span className="text-right">FILLS</span>
         <span className="text-right">CORRECTNESS</span>
         <span className="text-right">P99</span>
         <span className="text-right">TPS</span>
@@ -192,7 +296,12 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
 
       {entries.map((e, i) => {
         const m = e.details?.metrics;
+        const ts = e.details?.timestamp;
         const corr = e.details?.correctness;
+        const trade = e.details?.tradeStats;
+        const pnlColor = trade?.realizedPnl == null ? 'var(--term-muted)'
+          : trade.realizedPnl > 0 ? 'var(--term-green)'
+          : trade.realizedPnl < 0 ? 'var(--term-error)' : 'var(--term-muted)';
         const corrColor = corr == null ? 'var(--term-muted)'
           : corr >= 0.95 ? 'var(--term-green)'
           : corr >= 0.70 ? 'var(--term-amber)'
@@ -206,7 +315,7 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
           <div key={e.team}
             className="grid gap-x-3 text-xs items-center py-1"
             style={{
-              gridTemplateColumns: '56px 1fr 70px 130px 72px 72px 84px',
+              gridTemplateColumns: '56px 1fr 70px 90px 72px 82px 72px 130px 72px 72px 84px',
               borderBottom: '1px solid var(--term-dim)',
               background: i === 0 ? 'rgba(51,255,0,0.025)' : 'transparent',
             }}>
@@ -219,6 +328,18 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
               {e.team}
             </span>
             <span className={`text-right font-bold ${scoreLabel(e.score)}`}>{e.score}</span>
+            <span className="text-right" style={{ color: pnlColor, textShadow: pnlColor !== 'var(--term-muted)' ? 'var(--glow)' : 'none' }}>
+              {moneyLabel(trade?.realizedPnl)}
+            </span>
+            <span className="text-right" style={{ color: trade?.netPosition != null ? 'var(--term-green)' : 'var(--term-muted)' }}>
+              {trade?.netPosition != null ? trade.netPosition : '—'}
+            </span>
+            <span className="text-right" style={{ color: trade?.volumeUsd != null ? 'var(--term-green)' : 'var(--term-muted)' }}>
+              {trade?.volumeUsd != null ? '$' + trade.volumeUsd.toLocaleString() : '—'}
+            </span>
+            <span className="text-right" style={{ color: trade?.fillCount != null ? 'var(--term-green)' : 'var(--term-muted)' }}>
+              {trade?.fillCount != null ? trade.fillCount : '—'}
+            </span>
             <span className="text-right font-mono text-xs"
               style={{ color: corrColor, textShadow: corrGlow }}>
               {corr != null ? bar(corr) + ' ' + (corr * 100).toFixed(0) + '%' : '——'}
@@ -234,12 +355,13 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
               {m?.tps != null ? m.tps.toLocaleString() : '——'}
             </span>
             <span className="text-right text-[10px]" style={{ color: 'var(--term-muted)' }}>
-              {e.details?.timestamp ? new Date(e.details.timestamp).toLocaleTimeString() : '——'}
+              {ts ? new Date(ts).toLocaleTimeString() : '——'}
             </span>
           </div>
         );
       })}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -556,7 +678,7 @@ export default function HomePage() {
       <div className="flex justify-between text-[11px] mb-2" style={{ color: 'var(--term-muted)' }}>
         <span>
           {'> '}<span className="glow" style={{ color: 'var(--term-green)' }}>{entries.length}</span>
-          {' submissions ranked   score=0.6×correctness+0.4×latency   max=1000'}
+          {' submissions ranked   score=0.4×correctness+0.2×latency+0.4×trade   max=1000   trade stats shown for pnl/position/volume'}
           {error && <span className="ml-3" style={{ color: 'var(--term-error)' }}>[ERR] {error}</span>}
         </span>
         <span className="flex items-center gap-3">

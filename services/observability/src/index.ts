@@ -71,11 +71,57 @@ app.get('/metrics/live', (req, res) => {
   const p99 = sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : null;
   const tps = latencies.length > 0 ? Math.round(latencies.length / 10) : 0;
 
+  const fillEvents = window10s.filter(e => e.event === 'fill' && typeof e.qty === 'number' && typeof e.price === 'number');
+  const latestSummary = window10s.slice().reverse().find(e => e.tradeStats && typeof (e.tradeStats as any).volumeUsd === 'number');
+  const summaryTradeStats = latestSummary?.tradeStats as any || null;
+  const fillCount = summaryTradeStats?.fillCount ?? fillEvents.length;
+  const filledQty = summaryTradeStats?.filledQty ?? fillEvents.reduce((sum, e) => sum + (e.qty as number), 0);
+  const volumeUsd = summaryTradeStats?.volumeUsd ?? fillEvents.reduce((sum, e) => sum + (e.qty as number) * (e.price as number), 0);
+  let netPosition = 0;
+  let costBasis = 0;
+  let realizedPnl = 0;
+  if (summaryTradeStats) {
+    netPosition = summaryTradeStats.netPosition ?? 0;
+    realizedPnl = summaryTradeStats.realizedPnl ?? 0;
+  } else {
+    for (const e of fillEvents) {
+      const side = e.side === 'Sell' ? -1 : 1;
+      const qty = e.qty as number;
+      const price = e.price as number;
+      if (netPosition === 0 || Math.sign(netPosition) === side) {
+        netPosition += side * qty;
+        costBasis += side * price * qty;
+        continue;
+      }
+      const prevPosition = netPosition;
+      const closeQty = Math.min(Math.abs(prevPosition), qty);
+      const avgCost = Math.abs(costBasis) / Math.max(1, Math.abs(prevPosition));
+      if (prevPosition > 0) {
+        realizedPnl += closeQty * (price - avgCost);
+      } else {
+        realizedPnl += closeQty * (avgCost - price);
+      }
+      netPosition += side * closeQty;
+      costBasis -= Math.sign(prevPosition) * avgCost * closeQty;
+      if (qty > closeQty) {
+        const remainder = qty - closeQty;
+        netPosition += side * remainder;
+        costBasis += side * price * remainder;
+      }
+      if (netPosition === 0) costBasis = 0;
+    }
+  }
+
   res.json({
     activeRuns: [...runs],
     acksLast10s: latencies.length,
     tps,
     p99LatencyMs: p99,
+    fillCount,
+    filledQty,
+    volumeUsd,
+    realizedPnl: Math.round(realizedPnl * 100) / 100,
+    netPosition,
     totalEventsStored: events.length,
   });
 });
@@ -122,6 +168,9 @@ async function fetchMetrics() {
   document.getElementById('metrics').innerHTML =
     'TPS: <b>' + (m.tps ?? '-') + '</b> &nbsp;|&nbsp; p99: <b>' + (m.p99LatencyMs ?? '-') + 'ms</b>' +
     ' &nbsp;|&nbsp; Acks/10s: <b>' + m.acksLast10s + '</b>' +
+    ' &nbsp;|&nbsp; Fills/10s: <b>' + (m.fillCount ?? 0) + '</b>' +
+    ' &nbsp;|&nbsp; Volume: <b>' + (m.volumeUsd ?? 0) + '</b>' +
+    ' &nbsp;|&nbsp; PnL: <b>' + (m.realizedPnl ?? 0) + '</b>' +
     ' &nbsp;|&nbsp; Stored: <b>' + m.totalEventsStored + '</b>' +
     (m.activeRuns?.length ? ' &nbsp;|&nbsp; Run: <b>' + m.activeRuns[0] + '</b>' : '');
 }

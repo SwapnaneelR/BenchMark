@@ -2,10 +2,60 @@ import WebSocket from 'ws';
 import type { ClientMessage, ServerMessage, Fill } from '@iicpc/protocol';
 import type { RunResult } from './referenceEngine';
 import type { Redis } from 'ioredis';
+import type { TradeStats } from './trading';
 
 function logEvent(redis: Redis | undefined, data: object) {
   if (!redis) return;
   redis.xadd('events', '*', 'data', JSON.stringify(data)).catch(() => {});
+}
+
+function createTradeStats(totalOrders: number): TradeStats {
+  return {
+    totalOrders,
+    ackedOrders: 0,
+    rejectedOrders: 0,
+    fillCount: 0,
+    filledOrders: 0,
+    filledQty: 0,
+    volumeUsd: 0,
+    realizedPnl: 0,
+    netPosition: 0,
+  };
+}
+
+function applyFill(tradeStats: TradeStats, side: 'Buy' | 'Sell', qty: number, price: number, costBasis: { value: number }): void {
+  const sideSign = side === 'Buy' ? 1 : -1;
+  const previousPosition = tradeStats.netPosition;
+  const absPosition = Math.abs(previousPosition);
+
+  tradeStats.fillCount += 1;
+  tradeStats.filledQty += qty;
+  tradeStats.volumeUsd += price * qty;
+
+  if (previousPosition === 0 || Math.sign(previousPosition) === sideSign) {
+    tradeStats.netPosition += sideSign * qty;
+    costBasis.value += sideSign * price * qty;
+    return;
+  }
+
+  const closeQty = Math.min(absPosition, qty);
+  const avgCost = absPosition > 0 ? Math.abs(costBasis.value) / absPosition : 0;
+  const realized = previousPosition > 0
+    ? closeQty * (price - avgCost)
+    : closeQty * (avgCost - price);
+  tradeStats.realizedPnl += realized;
+  tradeStats.netPosition += sideSign * closeQty;
+  costBasis.value -= Math.sign(previousPosition) * avgCost * closeQty;
+
+  if (qty > closeQty) {
+    const remaining = qty - closeQty;
+    tradeStats.netPosition += sideSign * remaining;
+    costBasis.value += sideSign * price * remaining;
+  }
+
+  if (tradeStats.netPosition === 0) {
+    costBasis.value = 0;
+  }
 }
 
 export class Bot {
@@ -17,12 +67,15 @@ export class Bot {
     private redis?: Redis,
   ) {}
 
-  async runSerial(orders: ClientMessage[]): Promise<{ results: RunResult[]; latencies: number[] }> {
+  async runSerial(orders: ClientMessage[]): Promise<{ results: RunResult[]; latencies: number[]; tradeStats: TradeStats }> {
     const ws = new WebSocket(this.url);
     await new Promise<void>((res, rej) => { ws.once('open', res); ws.once('error', rej); });
 
     const results: RunResult[] = [];
     const latencies: number[] = [];
+    const tradeStats = createTradeStats(orders.length);
+    const filledOrders = new Set<string>();
+    const costBasis = { value: 0 };
 
     for (const order of orders) {
       const startMs = Date.now();
@@ -34,6 +87,7 @@ export class Bot {
           if (settled) return;
           settled = true;
           ws.off('message', handler);
+          tradeStats.rejectedOrders += 1;
           resolve({ requestId: order.id, fills, rejected: true });
         }, 3000);
 
@@ -44,12 +98,27 @@ export class Bot {
           if (msg.type === 'Fill') {
             const f = msg as Fill;
             fills.push({ price: f.price, qty: f.qty });
+            if (!filledOrders.has(order.id)) {
+              filledOrders.add(order.id);
+              tradeStats.filledOrders += 1;
+            }
+            const orderSide = order.type === 'NewLimit' || order.type === 'NewMarket'
+              ? (order.side[0].toUpperCase() + order.side.slice(1)) as 'Buy' | 'Sell'
+              : 'Buy';
+            applyFill(tradeStats, orderSide, f.qty, f.price, costBasis);
+            logEvent(this.redis, {
+              ts: Date.now(), runId: this.runId, teamId: this.teamId, botId: this.botId,
+              level: 'info', event: 'fill', orderId: order.id, side: orderSide,
+              price: f.price, qty: f.qty, position: tradeStats.netPosition,
+              realizedPnl: Math.round(tradeStats.realizedPnl * 100) / 100,
+            });
           } else if (msg.type === 'Ack') {
             setTimeout(() => {
               if (settled) return;
               settled = true;
               clearTimeout(guard);
               ws.off('message', handler);
+              tradeStats.ackedOrders += 1;
               resolve({ requestId: order.id, fills, rejected: false });
             }, 15);
           } else if (msg.type === 'Reject') {
@@ -57,6 +126,7 @@ export class Bot {
             settled = true;
             clearTimeout(guard);
             ws.off('message', handler);
+            tradeStats.rejectedOrders += 1;
             resolve({ requestId: order.id, fills: [], rejected: true });
           }
         };
@@ -82,7 +152,7 @@ export class Bot {
     }
 
     ws.close();
-    return { results, latencies };
+    return { results, latencies, tradeStats };
   }
 
   async runLoad(orders: ClientMessage[], onAck: (latencyMs: number) => void): Promise<void> {
