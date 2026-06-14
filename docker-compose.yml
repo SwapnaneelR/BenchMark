@@ -104,6 +104,8 @@ services:
       context: .
       dockerfile: services/observability/Dockerfile
     restart: unless-stopped
+    ports:
+      - "3002:3002"
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -123,6 +125,8 @@ services:
         API_URL: http://api:3000
         OBS_URL: http://observability:3002
     restart: unless-stopped
+    ports:
+      - "3001:3001"
     depends_on:
       - api
       - observability
