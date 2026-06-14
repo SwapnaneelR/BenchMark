@@ -5,3 +5,5 @@ submissions/*
 !submissions/.gitkeep
 .next/
 *.zip
+*.pdf
+*.docx
