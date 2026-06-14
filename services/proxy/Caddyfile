@@ -1,4 +1,7 @@
 :80 {
+    # Redirect bare /admin → /admin/ so handle_path below matches
+    redir /admin /admin/ 301
+
     # API — strip /api prefix before proxying
     handle_path /api/* {
         reverse_proxy api:3000
