@@ -170,6 +170,11 @@ export async function removeContainer(id: string): Promise<void> {
   await execAsync(`docker rm -f ${id}`).catch(() => {});
 }
 
+export async function removeImage(tag: string): Promise<void> {
+  await execAsync(`docker rmi ${tag}`).catch(() => {});
+}
+
+
 export async function waitForWs(url: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

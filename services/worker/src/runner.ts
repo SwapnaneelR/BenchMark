@@ -1,7 +1,8 @@
 import path from 'path';
+import { rm } from 'fs/promises';
 import {
   extractZip, buildImage,
-  runContainer, removeContainer, waitForWs,
+  runContainer, removeContainer, removeImage, waitForWs,
 } from './docker';
 import { generateOrders } from './orderGen';
 import { Bot } from './bot';
@@ -21,23 +22,31 @@ export async function run(data: { teamId: string; zipPath: string; botCount?: nu
   })).catch(() => {});
 
   const submissionDir = path.join(path.dirname(data.zipPath), 'extracted');
-  await extractZip(data.zipPath, submissionDir);
-  console.log(`[runner] Extracted to ${submissionDir}`);
-
   const tag = `submission-${runId.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
-  await buildImage(submissionDir, tag);
-  console.log(`[runner] Built image ${tag}`);
-
-  const containerName = `engine-${runId.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
-  const { id: containerId, hostPort } = await runContainer(tag, containerName);
-  const wsUrl = `ws://docker-daemon:${hostPort}`;
-  console.log(`[runner] Container ${containerId} published port ${hostPort}, url=${wsUrl}`);
-
-  redis.xadd('events', '*', 'data', JSON.stringify({
-    ts: Date.now(), runId, teamId: data.teamId, level: 'info', event: 'container_started', containerId, wsUrl,
-  })).catch(() => {});
+  let containerId = '';
 
   try {
+    await extractZip(data.zipPath, submissionDir);
+    console.log(`[runner] Extracted to ${submissionDir}`);
+
+    try {
+      await buildImage(submissionDir, tag);
+      console.log(`[runner] Built image ${tag}`);
+    } finally {
+      await rm(submissionDir, { recursive: true, force: true }).catch(() => {});
+      console.log(`[runner] Cleaned up temporary directory ${submissionDir}`);
+    }
+
+    const containerName = `engine-${runId.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+    const { id, hostPort } = await runContainer(tag, containerName);
+    containerId = id;
+    const wsUrl = `ws://docker-daemon:${hostPort}`;
+    console.log(`[runner] Container ${containerId} published port ${hostPort}, url=${wsUrl}`);
+
+    redis.xadd('events', '*', 'data', JSON.stringify({
+      ts: Date.now(), runId, teamId: data.teamId, level: 'info', event: 'container_started', containerId, wsUrl,
+    })).catch(() => {});
+
     await waitForWs(wsUrl);
     console.log(`[runner] Engine ready at ${wsUrl}`);
 
@@ -98,7 +107,11 @@ export async function run(data: { teamId: string; zipPath: string; botCount?: nu
     })).catch(() => {});
     throw err;
   } finally {
-    await removeContainer(containerId);
-    console.log(`[runner] Cleaned up container ${containerId}`);
+    if (containerId) {
+      await removeContainer(containerId);
+      console.log(`[runner] Cleaned up container ${containerId}`);
+    }
+    await removeImage(tag);
+    console.log(`[runner] Cleaned up image ${tag}`);
   }
 }

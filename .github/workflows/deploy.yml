@@ -17,5 +17,11 @@ jobs:
           script: |
             cd BenchMark
             git pull
+            # Clean up the DinD daemon's unused containers/images/volumes to free up space
+            docker compose exec -T docker-daemon docker system prune -af --volumes || true
+            # Clean up host docker system and builder cache
+            docker system prune -f
+            docker builder prune -af
             docker compose up --build -d
             docker compose ps
+
