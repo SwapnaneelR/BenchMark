@@ -17,10 +17,10 @@ jobs:
           script: |
             cd BenchMark
             git pull
-            # Clean up leftover extracted directories from before the resource leak fix
-            docker compose exec -T worker sh -c "rm -rf /submissions/*/*/extracted" || true
-            # Clean up the DinD daemon's unused containers/images/volumes to free up space
-            docker compose exec -T docker-daemon docker system prune -af --volumes || true
+            # Forcefully clean the submissions volume using a temporary container (bypasses need for worker to be running)
+            docker run --rm -v benchmark_submissions:/submissions alpine sh -c "rm -rf /submissions/*/*/extracted" || true
+            # Delete the swollen docker-in-docker volume entirely (it will be recreated automatically)
+            docker volume rm benchmark_docker-data || true
             # Clean up host docker system and builder cache
             docker system prune -af
             docker builder prune -af
