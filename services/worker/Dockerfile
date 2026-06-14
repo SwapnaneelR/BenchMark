@@ -1,10 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # ── Stage 1: compile fleet binary ─────────────────────────────────────────────
-# Use plain alpine (7MB) instead of node:20-alpine (150MB) — we only need C++ tools here
+# alpine:3.19 (7MB) instead of node:20-alpine (150MB) — saves ~140MB in this stage
 FROM alpine:3.19 AS fleet-builder
-# boost-static provides .a libs for static linking → no boost-libs needed in runtime image
-RUN apk add --no-cache cmake make g++ boost-dev boost-static
+RUN apk add --no-cache cmake make g++ boost-dev
 WORKDIR /fleet
 COPY services/fleet/ .
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && \
@@ -32,10 +31,9 @@ COPY services/worker   services/worker
 RUN npm run build -w @iicpc/protocol
 RUN npm run build -w @iicpc/worker
 
-# ── Stage 3: minimal runtime image ────────────────────────────────────────────
+# ── Stage 3: runtime image ────────────────────────────────────────────────────
 FROM node:20-alpine
-# docker-cli only — no boost-libs needed (fleet binary is statically linked)
-RUN apk add --no-cache docker-cli
+RUN apk add --no-cache docker-cli boost-libs
 WORKDIR /app
 COPY --from=fleet-builder /fleet/build/fleet /usr/local/bin/fleet
 COPY --from=builder /app/node_modules                    ./node_modules

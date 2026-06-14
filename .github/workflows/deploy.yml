@@ -15,6 +15,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
+          command_timeout: 60m
           script: |
             set -e
             REPO_DIR=$(find /root /home -maxdepth 3 -name "docker-compose.yml" 2>/dev/null | head -1 | xargs dirname)
