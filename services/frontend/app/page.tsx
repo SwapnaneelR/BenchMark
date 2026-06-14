@@ -5,6 +5,8 @@ import * as Tabs from '@radix-ui/react-tabs';
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
+interface Session { teamId: string; name: string; }
+
 interface Entry {
   rank: number;
   team: string;
@@ -47,13 +49,129 @@ function scoreLabel(s: number) {
   return 'text-term-error';
 }
 
-// ── sub-components ────────────────────────────────────────────────────────────
+const SESSION_KEY = 'bench_session';
+
+function loadSession(): Session | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (s?.teamId && s?.name) return s as Session;
+  } catch {}
+  return null;
+}
+
+function saveSession(s: Session) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+}
+
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+// ── JoinPanel ─────────────────────────────────────────────────────────────────
+
+function JoinPanel({ onJoin }: { onJoin: (s: Session) => void }) {
+  const [name, setName] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'err'>('idle');
+  const [errMsg, setErrMsg] = useState('');
+
+  const inputCls = `
+    w-full bg-term-bg border border-term-border px-2 py-1.5
+    text-term-green text-sm font-mono outline-none
+    focus:border-term-green placeholder-term-muted
+    caret-term-green
+  `;
+
+  const handleJoin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setStatus('loading');
+    setErrMsg('');
+    try {
+      const res = await fetch('/api/team/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const session: Session = { teamId: data.teamId, name: data.name };
+      saveSession(session);
+      onJoin(session);
+    } catch (err) {
+      setStatus('err');
+      setErrMsg(String(err));
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: '480px', margin: '0 auto', paddingTop: '48px' }}>
+      <pre className="text-term-green glow text-xs mb-6 text-center" style={{ letterSpacing: '0.15em' }}>
+{`██████╗ ███████╗███╗   ██╗ ██████╗██╗  ██╗
+██╔══██╗██╔════╝████╗  ██║██╔════╝██║  ██║
+██████╔╝█████╗  ██╔██╗ ██║██║     ███████║
+██╔══██╗██╔══╝  ██║╚██╗██║██║     ██╔══██║
+██████╔╝███████╗██║ ╚████║╚██████╗██║  ██║
+╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝`}
+      </pre>
+
+      <pre className="text-[11px] mb-6 text-center" style={{ color: 'var(--term-muted)' }}>
+        {`# IICPC matching engine benchmark\n# enter your team name to begin`}
+      </pre>
+
+      <form onSubmit={handleJoin} className="space-y-4">
+        <div>
+          <div className="text-[11px] mb-1" style={{ color: 'var(--term-muted)' }}>{'> TEAM_NAME'}</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px]" style={{ color: 'var(--term-muted)', whiteSpace: 'nowrap' }}>
+              bench:~$
+            </span>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="your_team_name_"
+              required
+              autoFocus
+              className={inputCls}
+            />
+          </div>
+          <div className="text-[10px] mt-1 ml-16" style={{ color: 'var(--term-dim, #0d2e0d)' }}>
+            letters, digits, _ and - only · max 64 chars
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={status === 'loading' || !name.trim()}
+          className="border border-term-green text-term-green bg-term-bg px-5 py-1.5 text-sm
+            font-mono tracking-widest cursor-pointer
+            hover:bg-term-green hover:text-term-bg
+            disabled:opacity-30 disabled:cursor-not-allowed
+            transition-colors w-full">
+          {status === 'loading' ? '[ JOINING... ]' : '[ ./join --team ]'}
+        </button>
+
+        {errMsg && (
+          <pre className="text-[11px] p-2 whitespace-pre-wrap break-all"
+            style={{ border: '1px solid var(--term-error)', color: 'var(--term-error)' }}>
+            [ERR] {errMsg}
+          </pre>
+        )}
+      </form>
+    </div>
+  );
+}
+
+// ── LeaderboardTable ──────────────────────────────────────────────────────────
 
 function LeaderboardTable({ entries }: { entries: Entry[] }) {
   if (entries.length === 0) {
     return (
       <pre className="text-term-muted text-xs py-8 text-center">
-        {`  [EMPTY]  no submissions yet\n  > ./submit --file=engine.zip --team=yourteam`}
+        {`  [EMPTY]  no submissions yet\n  > ./submit --file=engine.zip`}
       </pre>
     );
   }
@@ -125,8 +243,9 @@ function LeaderboardTable({ entries }: { entries: Entry[] }) {
   );
 }
 
-function SubmitPanel() {
-  const [team, setTeam] = useState('');
+// ── SubmitPanel ───────────────────────────────────────────────────────────────
+
+function SubmitPanel({ session }: { session: Session }) {
   const [file, setFile] = useState<File | null>(null);
   const [botCount, setBotCount] = useState(50);
   const [status, setStatus] = useState<'idle' | 'submitting' | 'ok' | 'err'>('idle');
@@ -134,15 +253,16 @@ function SubmitPanel() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!team.trim() || !file) return;
+    if (!file) return;
     setStatus('submitting');
     setMessage('');
     try {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('botCount', String(botCount));
-      const res = await fetch(`/api/submit?team=${encodeURIComponent(team.trim())}`, {
+      const res = await fetch('/api/submit', {
         method: 'POST',
+        headers: { 'X-Team-Id': session.teamId },
         body: fd,
       });
       const text = await res.text();
@@ -175,19 +295,7 @@ function SubmitPanel() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <div className="text-[11px] mb-1" style={{ color: 'var(--term-muted)' }}>{'> TEAM_NAME'}</div>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px]" style={{ color: 'var(--term-muted)', whiteSpace: 'nowrap' }}>
-              bench:~$
-            </span>
-            <input type="text" value={team} onChange={e => setTeam(e.target.value)}
-              placeholder="yourteam_" required className={inputCls} />
-          </div>
-        </div>
-
-        <div>
-          <div className="text-[11px] mb-1" style={{ color: 'var(--term-muted)' }}>
-            {'> ENGINE_ZIP'}&nbsp;
+          <div className="text-[11px] mb-1" style={{ color: 'var(--term-muted)' }}>{'> ENGINE_ZIP'}&nbsp;
             <span style={{ color: 'var(--term-dim, #0d2e0d)' }}>(Dockerfile must be at zip root)</span>
           </div>
           <div className="flex items-center gap-2">
@@ -229,7 +337,7 @@ function SubmitPanel() {
         </div>
 
         <button type="submit"
-          disabled={status === 'submitting' || !team.trim() || !file}
+          disabled={status === 'submitting' || !file}
           className="border border-term-green text-term-green bg-term-bg px-5 py-1.5 text-sm
             font-mono tracking-widest cursor-pointer
             hover:bg-term-green hover:text-term-bg
@@ -254,12 +362,14 @@ function SubmitPanel() {
       <div className="mt-5 pt-4" style={{ borderTop: '1px dashed var(--term-muted)' }}>
         <div className="text-[10px] mb-1" style={{ color: 'var(--term-muted)' }}>-- curl equivalent --</div>
         <pre className="text-[11px] whitespace-pre-wrap break-all" style={{ color: 'var(--term-muted)' }}>
-          {`curl -X POST -F "file=@engine.zip" -F "botCount=${botCount}" \\\n  "http://localhost:3000/submit?team=${team || 'yourteam'}"`}
+          {`curl -X POST \\\n  -H "X-Team-Id: ${session.teamId}" \\\n  -F "file=@engine.zip" \\\n  -F "botCount=${botCount}" \\\n  "http://localhost:3000/submit"`}
         </pre>
       </div>
     </div>
   );
 }
+
+// ── LogsPanel ─────────────────────────────────────────────────────────────────
 
 function LogsPanel() {
   const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
@@ -315,7 +425,6 @@ function LogsPanel() {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* metrics bar */}
       <div className="flex gap-6 text-[11px] px-3 py-2"
         style={{ border: '1px solid var(--term-border)', background: 'rgba(51,255,0,0.03)' }}>
         {metricsErr ? (
@@ -335,7 +444,6 @@ function LogsPanel() {
         )}
       </div>
 
-      {/* filters */}
       <div className="flex gap-3 text-[11px]">
         <div className="flex items-center gap-2">
           <span style={{ color: 'var(--term-muted)' }}>run:</span>
@@ -368,7 +476,6 @@ function LogsPanel() {
         </label>
       </div>
 
-      {/* log entries */}
       <div ref={scrollRef} style={{ height: '52vh', overflowY: 'auto', border: '1px solid var(--term-border)' }}>
         {logs.length === 0 ? (
           <pre className="text-[11px] text-center py-8" style={{ color: 'var(--term-muted)' }}>
@@ -400,9 +507,17 @@ function LogsPanel() {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Load session from localStorage after hydration
+  useEffect(() => {
+    setSession(loadSession());
+    setSessionLoaded(true);
+  }, []);
 
   useEffect(() => {
     const fetch_ = async () => {
@@ -419,6 +534,21 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, []);
 
+  const handleJoin = (s: Session) => setSession(s);
+
+  const handleLogout = () => {
+    clearSession();
+    setSession(null);
+  };
+
+  if (!sessionLoaded) return null;
+
+  if (!session) {
+    return (
+      <JoinPanel onJoin={handleJoin} />
+    );
+  }
+
   return (
     <Tabs.Root defaultValue="leaderboard">
       {/* status line */}
@@ -428,10 +558,18 @@ export default function HomePage() {
           {' submissions ranked   score=0.6×correctness+0.4×latency   max=1000'}
           {error && <span className="ml-3" style={{ color: 'var(--term-error)' }}>[ERR] {error}</span>}
         </span>
-        <span>
-          {lastRefresh
-            ? <>last=<span style={{ color: 'var(--term-green)' }}>{lastRefresh.toLocaleTimeString()}</span></>
-            : <span style={{ color: 'var(--term-muted)' }}>connecting...</span>}
+        <span className="flex items-center gap-3">
+          <span>
+            session:&nbsp;
+            <span className="glow" style={{ color: 'var(--term-green)' }}>{session.name}</span>
+          </span>
+          <button
+            onClick={handleLogout}
+            className="text-[10px] px-2 py-0.5 border font-mono cursor-pointer
+              hover:bg-term-green hover:text-term-bg transition-colors"
+            style={{ borderColor: 'var(--term-muted)', color: 'var(--term-muted)' }}>
+            [logout]
+          </button>
         </span>
       </div>
 
@@ -459,7 +597,7 @@ export default function HomePage() {
           <LeaderboardTable entries={entries} />
         </Tabs.Content>
         <Tabs.Content value="submit">
-          <SubmitPanel />
+          <SubmitPanel session={session} />
         </Tabs.Content>
         <Tabs.Content value="logs">
           <LogsPanel />
