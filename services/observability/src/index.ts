@@ -115,7 +115,7 @@ app.get('/', (_req, res) => {
 </div>
 <div id="log-container"></div>
 <script>
-const BASE = window.location.origin + window.location.pathname.replace(/\/+$/, '');
+const BASE = window.location.origin + window.location.pathname.replace(/[/]+$/, '');
 async function fetchMetrics() {
   const r = await fetch(BASE + '/metrics/live');
   const m = await r.json();
