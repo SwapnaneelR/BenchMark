@@ -17,10 +17,12 @@ jobs:
           script: |
             cd BenchMark
             git pull
+            # Clean up leftover extracted directories from before the resource leak fix
+            docker compose exec -T worker sh -c "rm -rf /submissions/*/*/extracted" || true
             # Clean up the DinD daemon's unused containers/images/volumes to free up space
             docker compose exec -T docker-daemon docker system prune -af --volumes || true
             # Clean up host docker system and builder cache
-            docker system prune -f
+            docker system prune -af
             docker builder prune -af
             docker compose up --build -d
             docker compose ps
