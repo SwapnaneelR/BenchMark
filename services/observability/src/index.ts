@@ -58,10 +58,11 @@ if (obsUser && obsPass) {
 }
 
 app.get('/logs', (req, res) => {
-  const { runId, botId, level, q, limit } = req.query as Record<string, string>;
+  const { runId, botId, level, q, limit, teamId } = req.query as Record<string, string>;
   const max = Math.min(parseInt(limit ?? '500'), 2000);
 
   let filtered = events as any[];
+  if (teamId) filtered = filtered.filter(e => e.teamId === teamId);
   if (runId) filtered = filtered.filter(e => e.runId === runId);
   if (botId) filtered = filtered.filter(e => e.botId === botId);
   if (level) filtered = filtered.filter(e => e.level === level);
@@ -73,9 +74,11 @@ app.get('/logs', (req, res) => {
   res.json(filtered.slice(-max));
 });
 
-app.get('/metrics/live', (_req, res) => {
+app.get('/metrics/live', (req, res) => {
+  const { teamId } = req.query as Record<string, string>;
   const now = Date.now();
-  const window10s = (events as any[]).filter(e => now - (e.ts ?? 0) < 10_000);
+  let window10s = (events as any[]).filter(e => now - (e.ts ?? 0) < 10_000);
+  if (teamId) window10s = window10s.filter(e => e.teamId === teamId);
 
   const runs = new Set(window10s.map(e => e.runId).filter(Boolean));
   const latencies = window10s.filter(e => e.event === 'ack' && typeof e.latencyMs === 'number').map(e => e.latencyMs as number);

@@ -13,6 +13,7 @@ export class Bot {
     private url: string,
     private botId = 'bot-0',
     private runId = '',
+    private teamId = '',
     private redis?: Redis,
   ) {}
 
@@ -64,7 +65,7 @@ export class Bot {
         ws.send(JSON.stringify(order));
 
         logEvent(this.redis, {
-          ts: Date.now(), runId: this.runId, botId: this.botId,
+          ts: Date.now(), runId: this.runId, teamId: this.teamId, botId: this.botId,
           level: 'info', event: 'order_sent',
           orderId: order.id, type: order.type,
         });
@@ -74,7 +75,7 @@ export class Bot {
       results.push(result);
 
       logEvent(this.redis, {
-        ts: Date.now(), runId: this.runId, botId: this.botId,
+        ts: Date.now(), runId: this.runId, teamId: this.teamId, botId: this.botId,
         level: 'info', event: result.rejected ? 'rejected' : 'acked',
         orderId: order.id, latencyMs: latencies[latencies.length - 1],
       });
@@ -98,7 +99,7 @@ export class Bot {
           pending.delete(msg.id);
           onAck(Date.now() - sent);
           logEvent(this.redis, {
-            ts: Date.now(), runId: this.runId, botId: this.botId,
+            ts: Date.now(), runId: this.runId, teamId: this.teamId, botId: this.botId,
             level: 'info', event: 'ack', orderId: msg.id,
             latencyMs: Date.now() - sent,
           });
@@ -110,7 +111,7 @@ export class Bot {
       pending.set(order.id, Date.now());
       ws.send(JSON.stringify(order));
       logEvent(this.redis, {
-        ts: Date.now(), runId: this.runId, botId: this.botId,
+        ts: Date.now(), runId: this.runId, teamId: this.teamId, botId: this.botId,
         level: 'info', event: 'order_sent', orderId: order.id, type: order.type,
       });
       // Small yield to avoid socket buffer overflow

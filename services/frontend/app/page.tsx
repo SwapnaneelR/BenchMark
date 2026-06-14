@@ -371,7 +371,7 @@ function SubmitPanel({ session }: { session: Session }) {
 
 // ── LogsPanel ─────────────────────────────────────────────────────────────────
 
-function LogsPanel() {
+function LogsPanel({ session }: { session: Session }) {
   const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState({ runId: '', level: '' });
@@ -388,9 +388,10 @@ function LogsPanel() {
         if (filter.runId) params.set('runId', filter.runId);
         if (filter.level) params.set('level', filter.level);
 
+        const headers = { 'X-Team-Id': session.teamId };
         const [mRes, lRes] = await Promise.all([
-          fetch('/obs/metrics/live'),
-          fetch(`/obs/logs?${params}`),
+          fetch('/api/metrics/live', { headers }),
+          fetch(`/api/logs?${params}`, { headers }),
         ]);
         if (!alive) return;
 
@@ -600,7 +601,7 @@ export default function HomePage() {
           <SubmitPanel session={session} />
         </Tabs.Content>
         <Tabs.Content value="logs">
-          <LogsPanel />
+          <LogsPanel session={session} />
         </Tabs.Content>
       </div>
     </Tabs.Root>

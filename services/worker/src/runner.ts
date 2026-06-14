@@ -42,7 +42,7 @@ export async function run(data: { teamId: string; zipPath: string; botCount?: nu
   console.log(`[runner] Container ${containerId} on network ${network}, url=${wsUrl}`);
 
   redis.xadd('events', '*', 'data', JSON.stringify({
-    ts: Date.now(), runId, level: 'info', event: 'container_started', containerId, wsUrl,
+    ts: Date.now(), runId, teamId: data.teamId, level: 'info', event: 'container_started', containerId, wsUrl,
   })).catch(() => {});
 
   try {
@@ -51,7 +51,7 @@ export async function run(data: { teamId: string; zipPath: string; botCount?: nu
 
     // Phase 1: serial correctness run
     const correctnessOrders = generateOrders(200, 42);
-    const serialBot = new Bot(wsUrl, 'serial', runId, redis);
+    const serialBot = new Bot(wsUrl, 'serial', runId, data.teamId, redis);
     const { results: actualResults, latencies: serialLatencies } = await serialBot.runSerial(correctnessOrders);
 
     const ref = new ReferenceEngine();
@@ -59,7 +59,7 @@ export async function run(data: { teamId: string; zipPath: string; botCount?: nu
     console.log(`[runner] Correctness: ${(correctness * 100).toFixed(1)}%`);
 
     redis.xadd('events', '*', 'data', JSON.stringify({
-      ts: Date.now(), runId, level: 'info', event: 'correctness_done',
+      ts: Date.now(), runId, teamId: data.teamId, level: 'info', event: 'correctness_done',
       correctness: Math.round(correctness * 1000) / 1000,
     })).catch(() => {});
 
@@ -75,7 +75,7 @@ export async function run(data: { teamId: string; zipPath: string; botCount?: nu
     const score = await saveScore(data.teamId, runId, metrics, correctness);
 
     redis.xadd('events', '*', 'data', JSON.stringify({
-      ts: Date.now(), runId, level: 'info', event: 'run_complete',
+      ts: Date.now(), runId, teamId: data.teamId, level: 'info', event: 'run_complete',
       score, correctness, metrics,
     })).catch(() => {});
 
@@ -83,7 +83,7 @@ export async function run(data: { teamId: string; zipPath: string; botCount?: nu
   } catch (err) {
     console.error(`[runner] Run ${runId} failed:`, err);
     redis.xadd('events', '*', 'data', JSON.stringify({
-      ts: Date.now(), runId, level: 'error', event: 'run_failed',
+      ts: Date.now(), runId, teamId: data.teamId, level: 'error', event: 'run_failed',
       error: String(err),
     })).catch(() => {});
     throw err;

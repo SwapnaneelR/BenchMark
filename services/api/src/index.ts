@@ -3,12 +3,14 @@ import cors from 'cors';
 import { submitRouter } from './routes/submit';
 import { leaderboardRouter } from './routes/leaderboard';
 import { teamRouter } from './routes/team';
+import { logsRouter } from './routes/logs';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.use(teamRouter);
+app.use(logsRouter);
 app.use(submitRouter);
 app.use(leaderboardRouter);
 
