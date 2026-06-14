@@ -34,6 +34,7 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     environment:
+      CADDY_HOST: ${CADDY_HOST:-:80}
       OBS_USER: admin
       OBS_PASS_HASH: $$2a$$14$$J9faJ6XqDXT0GeKtSm8J4OQY9j4Bdl/6jaYzeZFo8eW2V3JsML4Qq
     networks:
