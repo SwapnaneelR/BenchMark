@@ -10,7 +10,8 @@ COPY services/observability/package.json     services/observability/package.json
 COPY services/frontend/package.json          services/frontend/package.json
 
 # Install only what api + protocol need (avoids pulling in Next.js / React etc.)
-RUN npm install -w @iicpc/protocol -w @iicpc/api
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -w @iicpc/protocol -w @iicpc/api
 
 # Copy source after install (better layer caching)
 COPY packages/protocol packages/protocol

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Build C++ fleet binary on the same Alpine base as the runner so shared libs match.
 FROM node:20-alpine AS fleet-builder
 RUN apk add --no-cache cmake make g++ boost-dev
@@ -9,7 +10,6 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
-# Copy root manifest + all workspace package.json stubs so npm resolves workspaces
 COPY package.json tsconfig.base.json ./
 COPY packages/protocol/package.json          packages/protocol/package.json
 COPY services/api/package.json               services/api/package.json
@@ -17,7 +17,9 @@ COPY services/worker/package.json            services/worker/package.json
 COPY services/observability/package.json     services/observability/package.json
 COPY services/frontend/package.json          services/frontend/package.json
 
-RUN npm install -w @iicpc/protocol -w @iicpc/worker
+# Cache mount: npm packages stored outside overlay layer — saves ~400MB of disk during build
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -w @iicpc/protocol -w @iicpc/worker
 
 COPY packages/protocol packages/protocol
 COPY services/worker   services/worker

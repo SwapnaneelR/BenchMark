@@ -28,7 +28,16 @@ jobs:
             git remote set-url origin https://github.com/SwapnaneelR/BenchMark.git
             git fetch origin
             git reset --hard origin/main
-            # Build with cache (layer reuse keeps disk usage low during build)
-            docker compose up --build -d
+            # Build services one at a time + prune intermediate layers between each
+            # Prevents 4 services stacking temp layers simultaneously on an 8GB disk
+            docker compose build api
+            docker builder prune -f
+            docker compose build observability
+            docker builder prune -f
+            docker compose build frontend
+            docker builder prune -f
+            docker compose build worker
+            docker builder prune -f
+            docker compose up -d
             docker compose ps
 

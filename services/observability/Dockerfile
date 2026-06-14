@@ -1,9 +1,10 @@
+# syntax=docker/dockerfile:1
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY services/observability/package.json ./package.json
 COPY services/observability/tsconfig.json ./tsconfig.json
 COPY services/observability/src ./src
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 RUN npx tsc
 
 FROM node:20-alpine
