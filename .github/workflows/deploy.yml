@@ -87,8 +87,6 @@ jobs:
             cd "$REPO_DIR"
             git remote set-url origin https://github.com/SwapnaneelR/BenchMark.git
             git fetch origin && git reset --hard origin/main
-            # Clean old submission artifacts and DinD volume
-            docker run --rm -v benchmark_submissions:/submissions alpine sh -c "rm -rf /submissions/*/*/extracted" || true
             docker volume rm benchmark_docker-data || true
             # Pull pre-built images from ghcr.io (no build on server)
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
